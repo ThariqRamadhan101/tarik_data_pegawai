@@ -7,6 +7,8 @@ import {
   type Filters,
   type Row,
 } from '../lib/api'
+import { ResizeHandle } from './ResizableColumns'
+import { useResizableColumns } from '../lib/useResizableColumns'
 
 interface Props {
   /** Kolom yang ditampilkan di tabel hasil (urutan user). */
@@ -40,6 +42,7 @@ export default function SearchPanel({ fields, filters, onAdd }: Props) {
   const seq = useRef(0)
 
   const hasFilter = hasActiveFilters(filters)
+  const { startResize, resetWidth, thStyle, tdStyle } = useResizableColumns()
 
   const chips: [string, string[]][] = [
     ['unit', filters.unit],
@@ -162,10 +165,16 @@ export default function SearchPanel({ fields, filters, onAdd }: Props) {
                 {fields.map((f) => (
                   <th
                     key={f}
-                    className="border-b px-3 py-2 font-medium"
+                    className="relative border-b px-3 py-2 font-medium"
                     title={f}
+                    style={thStyle(f)}
                   >
                     {f}
+                    <ResizeHandle
+                      field={f}
+                      onResize={startResize}
+                      onReset={resetWidth}
+                    />
                   </th>
                 ))}
                 <th className="border-b px-2 py-2 font-medium">Aksi</th>
@@ -179,6 +188,7 @@ export default function SearchPanel({ fields, filters, onAdd }: Props) {
                       key={f}
                       className="max-w-[22rem] truncate border-b border-slate-100 px-3 py-1.5"
                       title={cell(r, f)}
+                      style={tdStyle(f)}
                     >
                       {cell(r, f)}
                     </td>

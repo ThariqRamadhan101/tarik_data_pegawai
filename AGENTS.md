@@ -1,154 +1,42 @@
 # AGENTS.md — tarik_data_pegawai
 
-## What this is
+Local tool: EHRM `laporan-pegawai` xlsx → SQLite → searchable webapp for picking employees and exporting xlsx.
 
-Local tool to pull, search, and pick employee ("pegawai") data:
+## Commands (Windows PowerShell)
 
-1. EHRM export xlsx in `database/pegawai/` → extracted into SQLite `database/pegawai.db`
-   (fast search + room for enrichment columns), then `scripts/enrich_pegawai.py`
-   adds 10 derived/enriched TEXT columns from the raw certificate workbooks in
-   `database/sertifikat/` + naming rules.
-2. Webapp (`web/` React+Vite+TS+Tailwind + `server/server.py`) — pick which columns
-   to show, search employees by multi-keyword (name/NIP/unit; several queries at
-   once separated by `;` are OR-alternatives) plus multi-select filters
-   (Unit Organisasi / Unit Kerja-Satuan Kerja / Jabatan / Jenis Jabatan / Status
-   Pegawai / Golongan / Propinsi / Potensi Menjabat / Potensi PPK / Potensi Bendahara /
-   Potensi PPSPM — always AND-combined across groups, OR within a group), build a
-   selection list (sortable columns, sort order kept in the Excel download).
-
-No git. Related code elsewhere in the workspace (don't duplicate it here):
-
-- `../../scripts/crawl_ehrm` — Python CLI that crawls EHRM (`ehrm.pu.go.id`) into
-  local SQLite; see its `AGENTS.md` for token/auth gotchas.
-- `../formasi` — Vite/React app joining formasi + pegawai data; see its `AGENTS.md`
-  (same Windows/npm quirks and workbook rules apply here).
-
-## Commands (Windows / PowerShell)
-
-Use `npm.cmd`, not `npm` — ExecutionPolicy blocks the `npm.ps1` shim.
+Use `npm.cmd`, not `npm` (ExecutionPolicy blocks the `npm.ps1` shim).
 
 ```powershell
-python scripts/extract_pegawai.py       # newest database/pegawai/*.xlsx -> database/pegawai.db (run FIRST, or after a new export drops in)
-python scripts/enrich_pegawai.py        # 10 enrichment columns (sertifikat + aturan) -> wajib ulang SETIAP re-extract
+python scripts/extract_pegawai.py       # newest database/pegawai/laporan-pegawai-*.xlsx (by mtime) -> database/pegawai.db
+python scripts/enrich_pegawai.py        # 10 derived columns; MUST re-run after every re-extract
 cd web; npm.cmd install; npm.cmd run build   # tsc -b && vite build -> web/dist
-python server/server.py                 # http://localhost:8000  (API + serves web/dist)
-
-# development: server.py must be running, then in web/:
-npm.cmd run dev                         # Vite dev server, proxies /api -> 127.0.0.1:8000
-npm.cmd run lint
-python scripts/smoke_test.py            # API smoke test (server must be running; prints OK/FAIL + counts only, no row data)
+python server/server.py                 # http://127.0.0.1:8000 (API + serves web/dist)
+npm.cmd run dev                         # in web/, Vite dev; server.py must already be running (proxies /api -> 127.0.0.1:8000)
+npm.cmd run lint                        # in web/
+python scripts/smoke_test.py            # server must be running; prints OK/FAIL + counts only, never row data
 ```
 
-Required order to verify changes: `extract` → `enrich` → `npm.cmd run build` →
-`npm.cmd run lint` → `python scripts/smoke_test.py`. **No unit-test suite** —
-build + lint + smoke test are the verification.
+Order: `extract` → `enrich` → `build` → `lint` → `smoke_test`. No unit-test suite; build + lint + smoke test are the verification. System Python already has `pandas` + `openpyxl` (no venv); server needs stdlib + openpyxl only.
 
 ## Architecture
 
-- `scripts/extract_pegawai.py` — sheet `laporan-pegawai` → table `pegawai`. Re-runs
-  are idempotent (table rebuilt, source name/timestamp recorded in `meta`); the source
-  workbook is never modified. **But re-extract deletes and recreates the DB file** —
-  enrichment columns are lost; re-run `scripts/enrich_pegawai.py` after every
-  re-extract.
-- `scripts/enrich_pegawai.py` — **re-runnable/idempotent** (ALTER TABLE, tolerate
-  duplicate column, then full UPDATE of every row each run); **print counts only,
-  never row contents (PII)**. Builds 10 TEXT columns:
-  `UNIT KERJA / SATUAN KERJA` (copy `UNIT KERJA`, except sekretariat rows take the
-  wilayah from
-  `JABATAN LENGKAP` "Pelaksanaan Prasarana Strategis {wilayah}", fallback to the
-  sekretariat name itself), `POTENSI MENJABAT` (rule by `JENIS JABATAN` +
-  keywords → "ya"/"tidak"/"": struktural/lainnya selalu "tidak"; perbendaharaan
-  "ya" bila `JABATAN LENGKAP` memuat kata teknik; fungsional/pelaksana "tidak"
-  bila `JABATAN RANGKAP` memuat kata pimpinan
-  (direktur/sekretaris/kepala/bendahara/pejabat), selain itu "ya"), `SERTIFIKAT PNT/SNT/BNT/PBJ/PPK`
-  (certificate NUMBER as value, empty = doesn't have, multiple joined `"; "`), and
-  derived `POTENSI PPK`/`POTENSI BENDAHARA`/`POTENSI PPSPM` ("ya" iff the matching
-  cert column is filled; PPK also needs PNT). Sertifikat sources: sheet AKTIF of
-  `rev4_Database Sertifikat Kompetensi …xlsx` (header row 4, NIP/jenis/nomor →
-  PNT/SNT/BNT) and sheets PBJ/PPK of `SERTIFIKAT PBJ DAN PPK TA. 2026.xlsx`
-  (header row 3, NIP col G / nomor col B; skip empty template rows). NIPs are
-  normalized (trim, strip `.0`) on both sides; NIP is not unique in `pegawai`, so
-  UPDATE matches every row with that NIP. `meta.enriched_at` is recorded. Renames
-  the legacy `SATUAN KERJA` column automatically if a previous version created it.
-- Every value is stored as **TEXT** — `NIP` and dates (`TANGGAL LAHIR`, `TMT *`, …)
-  are `dd-mm-yyyy` strings in the source; never parse them as dates/numbers.
-- Hidden system columns (not offered in the UI): `id` (row key — **not NIP**; NIP is
-  not unique: 37.924 rows / 37.596 distinct NIPs) and `finder_text` (UPPER concat of
-  name/NIP/jabatan/unit/… used for search).
-- **Ad-hoc enrichment = add a column, no code change:** `sqlite3 database/pegawai.db
-  "ALTER TABLE pegawai ADD COLUMN <nama> TEXT"`. `/api/columns` reads
-  `PRAGMA table_info`, so the new column automatically appears in the UI column
-  picker; fill values with any UPDATE script. The 10 standard columns are owned by
-  `scripts/enrich_pegawai.py` — use that instead of hand ALTERing (and see the
-  re-extract warning above).
-- `server/server.py` — **stdlib only** (http.server + sqlite3; openpyxl for export —
-  no pip installs). Opens the DB read-only. Endpoints: `/api/meta`, `/api/columns`,
-  `/api/facets` (distinct values for the 11 filter groups: `UNIT ORGANISASI`,
-  `UNIT KERJA / SATUAN KERJA`, `NAMA JABATAN`, `JENIS JABATAN`, `STATUS PEGAWAI`,
-  `GOLONGAN`, `PROPINSI`, `POTENSI MENJABAT`, `POTENSI PPK`, `POTENSI BENDAHARA`,
-  `POTENSI PPSPM`),
-  `/api/search?q=&limit=&<filter params>&mode=` (multi-keyword AND: every
-  space-separated token must appear in `finder_text`, case-insensitive — the Excel
-  Finder `TEXTSPLIT`+`SEARCH` formula. **`;` separates alternative queries, OR'd
-  together** (`"agus prasarana strategis; budi sumber daya air"` = segment1 OR
-  segment2; ranking uses the first segment). Ranked: exact NIP → NIP prefix → name
-  prefix. Response has `count` (total matches, can be thousands) + `rows`
-  (top `limit`,
-  MAX_LIMIT 200). `q` is ANDed with the filter group. Filter params:
-  `unit`/`unit_kerja`/`jabatan_nilai`/`jenis_jabatan`/`status`/`golongan`/`propinsi`/`potensi_menjabat`/`potensi_ppk`/`potensi_bendahara`/`potensi_ppspm`
-  are exact UPPER `IN` matches and **multi-value — repeat the param**
-  (`?unit=A&unit=B` = OR
-  inside the group; built by `URLSearchParams.append` in `web/src/lib/api.ts`;
-  `unit_kerja` filters the derived `UNIT KERJA / SATUAN KERJA` column);
-  legacy `jabatan` stays a single per-token-contains keyword on `NAMA JABATAN`; the
-  group combines by `mode` `and` (default) or `or` — API-level only, the webapp UI
-  always uses AND and never sends `mode`; filter-only search works with empty `q`),
-  `/api/ids?<same params as search>` (ALL matching ids, no display limit — powers
-  "Tambah semua yang cocok" for pulling a whole unit, e.g. 14k rows),
-  `/api/rows?ids=&fields=`
-  (fields validated against `PRAGMA table_info`, order preserved; up to MAX_ROWS
-  40_000 ids per call — the web client chunks at 500 ids/request to keep URLs short),
-  `POST /api/export`
-  `{ids, fields}` → xlsx download (server-side, openpyxl; `ids` order = Excel row
-  order; MAX_ROWS 40_000), plus static `web/dist`.
-- `web/src/App.tsx` — `DEFAULT_KOLOM` shows the default columns
-  (`NAMA LENGKAP`, `NIP`, `STATUS PEGAWAI`, `GOLONGAN`, `DESKRIPSI GOLONGAN`,
-  `NAMA JABATAN`, `UNIT ORGANISASI`, `UNIT KERJA / SATUAN KERJA`). State in
-  `localStorage`: **column picks persist across re-extracts** (pruned if a column
-  vanishes — and an old saved pick predating the enrichment columns keeps the old
-  pick; use the picker's reset to pick up `DEFAULT_KOLOM`); **selected row ids
-  are keyed by `meta.generatedAt`** and discarded automatically after a
-  re-extract (ids would point at different people). Session-only state (reset on
-  reload): filter bar (`web/src/components/FilterBar.tsx` — eleven `MultiSelect`
-  dropdowns: checkbox list + search box for long lists like the 664 jabatan values)
-  and column sorting of the selection list
-  (`web/src/lib/sort.ts` — click header asc → desc → insertion order;
-  `displayRows` order is what `/api/export` receives, so the Excel matches the
-  on-screen order). Note: the served port is Windows `SO_REUSEADDR`-friendly —
-  if a stale `server.py` is already listening on :8000, a second instance starts
-  anyway and requests randomly hit the old code; kill stale processes first
-  (`Get-NetTCPConnection -LocalPort 8000 -State Listen`).
-- The full 37.924-row dataset (~54 MB DB) never reaches the browser: search results
-  show the top 200 (`DISPLAY_LIMIT` in `web/src/components/SearchPanel.tsx`; the
-  button shows the full `count`); "Tambah semua yang cocok" fetches **all** matching
-  ids via `/api/ids` — selection rows are then loaded in 500-id chunks (`ROWS_CHUNK`
-  in `web/src/lib/api.ts`), so pulling a whole 14k-row unit works and only the picked
-  columns cross the wire.
+- `scripts/extract_pegawai.py` — sheet `laporan-pegawai` → table `pegawai`. Idempotent but **deletes/recreates the DB file**, so enrichment columns are lost. Source workbook never modified; `--xlsx`/`--db` override defaults. All values stored as **TEXT** (NIP, `TANGGAL LAHIR`/`TMT *` are `dd-mm-yyyy` strings — never parse as number/date).
+- `scripts/enrich_pegawai.py` — idempotent (`ADD COLUMN` tolerant of duplicates, full `UPDATE` each run). Adds 10 TEXT columns: `UNIT KERJA / SATUAN KERJA`, `POTENSI MENJABAT`, `SERTIFIKAT PNT/SNT/BNT/PBJ/PPK` (cert number, `"; "`-joined if several, empty = none), `POTENSI PPK`, `POTENSI BENDAHARA`, `POTENSI PPSPM`. Rules:
+  - `UNIT KERJA / SATUAN KERJA` = copy `UNIT KERJA`, **hanya untuk baris sekretariat PS** (`Sekretariat Direktorat Jenderal Prasarana Strategis`) diambil wilayah dari `JABATAN LENGKAP` match `Pelaksanaan Prasarana Strategis {wilayah}` (fallback: nama sekretariat). Kecocokan berupa angka romawi (I/II/III — itu nomor `PPK …`, mis. `PPK … Strategis II, … Strategis Jawa Barat`) dilewati; dipakai kecocokan wilayah berikutnya. Renames legacy `SATUAN KERJA` automatically.
+  - `POTENSI MENJABAT`: struktural/lainnya → `tidak`; perbendaharaan → `ya` iff `JABATAN LENGKAP` contains `PELAKSANA/PETUGAS/PENATA TEKNIK`; fungsional/pelaksana → `tidak` iff `JABATAN RANGKAP` contains pimpinan word (direktur/sekretaris/kepala/bendahara(pejabat)), else `ya`; unknown jenis → empty.
+  - `POTENSI PPK` = `ya` iff PNT **and** (PBJ or PPK) present, else `tidak`; `POTENSI BENDAHARA` = `ya` iff BNT; `POTENSI PPSPM` = `ya` iff SNT (these three are always `ya`/`tidak`, never empty).
+  - Sources in `database/sertifikat/`: `rev4_Database Sertifikat Kompetensi …xlsx` sheet `AKTIF` (header row 4, keyed on `NIP` / `JENIS SERTIFIKAT KOMPETENSI` / `NOMOR SERTIFIKAT` → PNT/SNT/BNT) and `SERTIFIKAT PBJ DAN PPK TA. 2026.xlsx` sheets `PBJ`/`PPK` (header row 3, keyed on `NIP` / `Nomor Sertifikat`). NIPs normalized (trim, strip `.0`); NIP is not unique so UPDATE hits every matching row. Records `meta.enriched_at`.
+- Row key is `id`, **not NIP** (NIP duplicates exist). `id` + `finder_text` (UPPER concat of NIP/name/jabatan/unit/… for search) are hidden from `/api/columns` and the UI.
+- Ad-hoc column = code-free: `ALTER TABLE pegawai ADD COLUMN <nama> TEXT` + UPDATE; `/api/columns` reads `PRAGMA table_info` so it appears in the picker automatically. Don't hand-ALTER the 10 owned columns — use the enrich script.
+- `server/server.py` — read-only SQLite, stdlib `http.server`. Endpoints: `/api/meta`, `/api/columns`, `/api/facets` (11 filter groups), `/api/search`, `/api/ids` (ALL matching ids, no display limit), `/api/rows?ids=&fields=` (order preserved, validated vs `PRAGMA`), `POST /api/export {ids, fields}` (ids order = Excel row order), static `web/dist`. Limits: search `MAX_LIMIT 200`, rows/export/ids `MAX_ROWS 40_000`.
+  - Search: space-separated tokens AND against `finder_text` (case-insensitive, `%`/`_` escaped); `;` splits OR-alternative segments (ranking uses first segment). Rank: exact NIP → NIP prefix → name prefix → rest. Empty `q` + no filters returns `[]` (never dumps the ~38k-row DB).
+  - Filters: `unit` / `unit_kerja` / `jabatan_nilai` / `jenis_jabatan` / `status` / `golongan` / `propinsi` / `potensi_menjabat` / `potensi_ppk` / `potensi_bendahara` / `potensi_ppspm` are exact UPPER `IN` matches, **multi-value by repeating the param** (`?unit=A&unit=B` = OR within group, AND across groups by default). Legacy `jabatan` is single per-token-contains on `NAMA JABATAN`. `mode=or` is API-only; the UI always uses AND. Filter-only search (empty `q`) works.
+- `web/src/App.tsx` — `DEFAULT_KOLOM`: `NAMA LENGKAP, NIP, STATUS PEGAWAI, GOLONGAN, DESKRIPSI GOLONGAN, NAMA JABATAN, UNIT ORGANISASI, UNIT KERJA / SATUAN KERJA`. `localStorage`: column picks persist (pruned if a column vanishes; old pre-enrichment picks need picker reset to get `DEFAULT_KOLOM`); selected ids keyed by `meta.generatedAt` and discarded after re-extract. Sort (`web/src/lib/sort.ts`): header click asc → desc → insertion order; `displayRows` order is what gets exported. Scale guards: results show top 200 (`DISPLAY_LIMIT` in `SearchPanel.tsx`), "tambah semua" goes via `/api/ids` + 500-id `/api/rows` chunks (`ROWS_CHUNK` in `web/src/lib/api.ts`) so whole-unit pulls work with only picked columns on the wire. Table headers have a drag handle to resize column widths (`ResizeHandle` + `useResizableColumns`; double-click resets).
+
+Related code (don't duplicate): `../../scripts/crawl_ehrm` (EHRM crawler, token/auth notes in its `AGENTS.md`) and `../formasi` (Vite app joining formasi + pegawai; same Windows/npm and workbook rules).
 
 ## Gotchas
 
-- **PII.** The source workbooks **and `database/pegawai.db`** contain NIK/KTP, NPWP,
-  phone, address, email of real people. Treat both as confidential: never commit them
-  (`.gitignore` lists the PII files under `database/`), never paste row contents into
-  prompts, logs, or test output (print counts/status only — `scripts/smoke_test.py`
-  follows this).
-- System Python already has `pandas` + `openpyxl` (no venv needed on this machine).
-  The server needs nothing beyond stdlib + openpyxl.
-- Don't hand-edit or re-zip the `.xlsx` (OOXML zip; corrupts easily — see
-  `../formasi/AGENTS.md` "Workbook gotchas"). Use openpyxl/pandas instead.
-- No script in the workspace **writes** `laporan-pegawai-<epoch-ms>.xlsx` — a new file
-  in `database/pegawai/` comes from a manual EHRM export; just drop it there and
-  re-extract (commands above pick the newest by mtime).
-- New exports arrive as new epoch-named files; old ones stay as history — extract
-  never deletes or overwrites anything in `database/pegawai/` (it only rebuilds the
-  DB passed via `--db`).
+- **PII**: workbooks + `database/pegawai.db` contain NIK/NPWP/phone/address/email. Never commit (see `.gitignore`), never paste row contents into prompts/logs/test output — counts only.
+- Stale `:8000` listener: Windows `SO_REUSEADDR` lets a second `server.py` start alongside the old one with requests randomly hitting stale code. Kill first: `Get-NetTCPConnection -LocalPort 8000 -State Listen`.
+- Never hand-edit or re-zip `.xlsx` (OOXML corrupts easily); use openpyxl/pandas. New EHRM exports arrive as new `laporan-pegawai-<epoch-ms>.xlsx` files (history kept; extract only rebuilds the DB).

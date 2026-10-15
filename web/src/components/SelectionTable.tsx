@@ -1,5 +1,7 @@
 import { type Row } from '../lib/api'
 import type { SortState } from '../lib/sort'
+import { ResizeHandle } from './ResizableColumns'
+import { useResizableColumns } from '../lib/useResizableColumns'
 
 interface Props {
   fields: string[]
@@ -36,6 +38,7 @@ export default function SelectionTable({
   onHeaderSort,
   onSortReset,
 }: Props) {
+  const { startResize, resetWidth, thStyle, tdStyle } = useResizableColumns()
   return (
     <section className="flex min-h-0 flex-[2] flex-col rounded-lg border border-slate-200 bg-white shadow-sm">
       <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-3">
@@ -87,7 +90,12 @@ export default function SelectionTable({
             <thead className="sticky top-0 bg-slate-50 text-left text-xs uppercase text-slate-500">
               <tr>
                 {fields.map((f) => (
-                  <th key={f} className="border-b font-medium" title={f}>
+                  <th
+                    key={f}
+                    className="relative border-b font-medium"
+                    title={f}
+                    style={thStyle(f)}
+                  >
                     <button
                       onClick={() => onHeaderSort(f)}
                       className="flex w-full items-center gap-1 px-3 py-2 hover:bg-slate-100"
@@ -102,6 +110,11 @@ export default function SelectionTable({
                         {sort?.field === f ? (sort.dir === 'asc' ? '▲' : '▼') : ''}
                       </span>
                     </button>
+                    <ResizeHandle
+                      field={f}
+                      onResize={startResize}
+                      onReset={resetWidth}
+                    />
                   </th>
                 ))}
                 <th className="border-b px-2 py-2 font-medium">Aksi</th>
@@ -115,6 +128,7 @@ export default function SelectionTable({
                       key={f}
                       className="max-w-[22rem] truncate border-b border-slate-100 px-3 py-1.5"
                       title={cell(r, f)}
+                      style={tdStyle(f)}
                     >
                       {cell(r, f)}
                     </td>

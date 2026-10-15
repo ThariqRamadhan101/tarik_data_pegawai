@@ -49,10 +49,12 @@ ENRICH_COLS = ["UNIT KERJA / SATUAN KERJA", "POTENSI MENJABAT", *SERTIFIKAT_COLS
 LEGACY_SATUAN = "SATUAN KERJA"  # nama kolom lama -> di-rename saat migrasi
 
 SEKRETARIAT_PS = "Sekretariat Direktorat Jenderal Prasarana Strategis"
-# "Pelaksanaan Prasarana Strategis <Wilayah>," - wilayah bisa ada newline;
-# kata "PPK Pelaksanaan Prasarana Strategis" tanpa wilayah otomatis dilewati
-# karena group wajib minimal satu karakter selain koma/newline.
+# "Pelaksanaan Prasarana Strategis <Wilayah>" - wilayah bisa ada newline.
+# Kecocokan berupa angka romawi (I/II/III) dilewati: itu penomoran PPK
+# ("PPK Pelaksanaan Prasarana Strategis II, Pelaksanaan Prasarana Strategis
+#  Jawa Barat, ...") - wilayah yang benar ada di kecocokan berikutnya.
 RE_PS = re.compile(r"Pelaksanaan Prasarana Strategis\s+([^,\n]+)", re.IGNORECASE)
+RE_ROMAWI = re.compile(r"^(I|II|III|IV|V|VI|VII|VIII|IX|X)$", re.IGNORECASE)
 
 KATA_TEKNIK = ("PELAKSANA TEKNIK", "PETUGAS TEKNIK", "PENATA TEKNIK")
 KATA_PEMIMPIN = ("DIREKTUR", "SEKRETARIS", "KEPALA", "BENDAHARA",
@@ -73,12 +75,13 @@ def valid_nip(s: str) -> bool:
 
 
 def satuan_kerja(unit_kerja: str, jabatan_lengkap: str) -> str:
+    # Hanya baris sekretariat PS yang dipecah ke wilayah; unit lain disalin
+    # apa adanya (aturan ini TIDAK berlaku di luar sekretariat PS).
     if unit_kerja.strip().upper() != SEKRETARIAT_PS.upper():
         return unit_kerja.strip()
-    m = RE_PS.search(jabatan_lengkap)
-    if m:
+    for m in RE_PS.finditer(jabatan_lengkap):
         wilayah = " ".join(m.group(1).split())
-        if wilayah:
+        if wilayah and not RE_ROMAWI.match(wilayah):
             return f"Pelaksanaan Prasarana Strategis {wilayah}"
     return SEKRETARIAT_PS
 
@@ -189,7 +192,7 @@ def main() -> None:
         for r in rows:
             sk = satuan_kerja(r["UNIT KERJA"] or "", r["JABATAN LENGKAP"] or "")
             if (r["UNIT KERJA"] or "").strip().upper() == SEKRETARIAT_PS.upper():
-                if RE_PS.search(r["JABATAN LENGKAP"] or ""):
+                if sk.upper() != SEKRETARIAT_PS.upper():
                     stats["satuan_ps"] += 1
                 else:
                     stats["satuan_fallback"] += 1
