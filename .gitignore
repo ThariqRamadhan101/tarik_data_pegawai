@@ -1,0 +1,11 @@
+# PII - jangan pernah di-commit (sumber & hasil ekstrak berisi data pegawai)
+database/pegawai/*.xlsx
+database/sertifikat/*.xlsx
+database/*.db
+
+# build artifacts
+web/node_modules/
+web/dist/
+
+# skrip lokal (token EHRM dsb., lihat ../formasi dan ../../scripts/crawl_ehrm)
+.env
