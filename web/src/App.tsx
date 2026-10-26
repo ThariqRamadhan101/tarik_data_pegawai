@@ -8,10 +8,8 @@ import {
   EMPTY_FILTERS,
   errorText,
   getColumns,
-  getFacets,
   getMeta,
   getRows,
-  type Facets,
   type Filters,
   type Meta,
   type Row,
@@ -31,6 +29,7 @@ const DEFAULT_KOLOM = [
   'NAMA JABATAN',
   'UNIT ORGANISASI',
   'UNIT KERJA / SATUAN KERJA',
+  'PROPINSI',
 ]
 
 function load<T>(key: string): T | null {
@@ -45,19 +44,6 @@ function load<T>(key: string): T | null {
 export default function App() {
   const [meta, setMeta] = useState<Meta | null>(null)
   const [columns, setColumns] = useState<string[]>([])
-  const [facets, setFacets] = useState<Facets>({
-    unitOrganisasi: [],
-    unitKerja: [],
-    namaJabatan: [],
-    jenisJabatan: [],
-    statusPegawai: [],
-    golongan: [],
-    propinsi: [],
-    potensiMenjabat: [],
-    potensiPpk: [],
-    potensiBendahara: [],
-    potensiPpspm: [],
-  })
   const [picked, setPicked] = useState<string[]>([])
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS)
   const [ids, setIds] = useState<number[]>([])
@@ -65,22 +51,23 @@ export default function App() {
   const [sort, setSort] = useState<SortState | null>(null)
   const [rowsLoading, setRowsLoading] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Muat metadata + daftar kolom sekali di awal; rekonsiliasi localStorage.
   useEffect(() => {
     let cancel = false
-    Promise.all([getMeta(), getColumns(), getFacets()])
-      .then(([m, cols, fac]) => {
+    Promise.all([getMeta(), getColumns()])
+      .then(([m, cols]) => {
         if (cancel) return
         setMeta(m)
         setColumns(cols)
-        setFacets(fac)
 
         const savedCols = load<string[]>(LS_KOLOM)
-        if (savedCols !== null) {
+        if (savedCols !== null && savedCols.length > 0) {
           setPicked(savedCols.filter((c) => cols.includes(c)))
         } else {
+          // First load (no localStorage, or user cleared all picks): ceklis semua DEFAULT_KOLOM.
           setPicked(DEFAULT_KOLOM.filter((c) => cols.includes(c)))
         }
 
@@ -171,34 +158,35 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <header className="flex items-center gap-4 bg-slate-800 px-4 py-3 text-white">
-        <h1 className="text-base font-semibold">Cari & Pilih Pegawai</h1>
+    <div className="flex min-h-dvh flex-col bg-slate-50 lg:h-dvh lg:overflow-hidden">
+      {/* Header - fixed */}
+      <header className="flex shrink-0 items-center gap-2 bg-slate-800 px-3 py-2.5 text-white shadow-md">
+        {/* Hamburger button - mobile only */}
+        <button
+          onClick={() => setSidebarOpen(true)}
+          className="rounded-lg p-1.5 hover:bg-slate-700 lg:hidden"
+          aria-label="Buka panel kolom"
+        >
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+        
+        <h1 className="truncate text-sm font-semibold lg:text-base">Cari & Pilih Pegawai</h1>
         {meta && (
-          <span className="text-xs text-slate-300">
-            {meta.source} · {meta.rows.toLocaleString('id-ID')} baris ·{' '}
-            {meta.columns} kolom · diextrak {meta.generatedAt}
+          <span className="hidden truncate text-xs text-slate-400 lg:inline">
+            {meta.rows.toLocaleString('id-ID')} baris
           </span>
         )}
-        <span className="ml-auto rounded-full bg-blue-600 px-3 py-1 text-sm font-medium">
+        <span className="ml-auto shrink-0 rounded-full bg-blue-600 px-2.5 py-1 text-xs font-medium lg:px-3 lg:text-sm">
           {ids.length} terpilih
         </span>
       </header>
 
-      {error && (
-        <div className="flex items-center gap-3 bg-red-100 px-4 py-2 text-sm text-red-700">
-          <span className="flex-1">{error}</span>
-          <button
-            onClick={() => setError(null)}
-            className="rounded px-2 py-0.5 hover:bg-red-200"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
-      <div className="flex min-h-0 flex-1">
-        <aside className="w-72 shrink-0 border-r border-slate-200 bg-white">
+      {/* Main content */}
+      <div className="flex flex-col lg:flex-1 lg:flex-row lg:overflow-hidden">
+        {/* Desktop sidebar - always visible on lg+ */}
+        <aside className="hidden w-64 shrink-0 border-r border-slate-200 bg-white lg:flex lg:flex-col">
           <ColumnPicker
             columns={columns}
             picked={picked}
@@ -210,9 +198,62 @@ export default function App() {
           />
         </aside>
 
-        <main className="flex min-w-0 flex-1 flex-col gap-4 overflow-hidden p-4">
-          <FilterBar facets={facets} filters={filters} onChange={setFilters} />
+        {/* Mobile sidebar overlay */}
+        {sidebarOpen && (
+          <div className="fixed inset-0 z-50 lg:hidden">
+            <div
+              className="absolute inset-0 bg-black/50"
+              onClick={() => setSidebarOpen(false)}
+            />
+            <div className="absolute right-0 top-0 h-full w-80 max-w-[85vw] bg-white shadow-xl">
+              <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+                <h2 className="text-sm font-semibold">Pilih Kolom</h2>
+                <button
+                  onClick={() => setSidebarOpen(false)}
+                  className="rounded-lg p-1.5 hover:bg-slate-100"
+                  aria-label="Tutup"
+                >
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <ColumnPicker
+                columns={columns}
+                picked={picked}
+                onToggle={(col) => {
+                  togglePicked(col)
+                }}
+                onClear={() => setPicked([])}
+                onReset={() =>
+                  setPicked(DEFAULT_KOLOM.filter((c) => columns.includes(c)))
+                }
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Main scrollable area */}
+        <main className="flex min-w-0 flex-col gap-3 p-3 lg:flex-1 lg:gap-4 lg:overflow-hidden lg:p-4">
+          {error && (
+            <div className="flex shrink-0 items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              <span className="flex-1">{error}</span>
+              <button
+                onClick={() => setError(null)}
+                className="shrink-0 rounded p-1 hover:bg-red-100"
+                aria-label="Tutup error"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
+
+          <FilterBar columns={columns} filters={filters} onChange={setFilters} />
+
           <SearchPanel fields={picked} filters={filters} onAdd={addIds} />
+
           <SelectionTable
             fields={picked}
             rows={displayRows}

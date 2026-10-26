@@ -7,13 +7,11 @@ import {
   type Filters,
   type Row,
 } from '../lib/api'
-import { ResizeHandle } from './ResizableColumns'
-import { useResizableColumns } from '../lib/useResizableColumns'
 
 interface Props {
   /** Kolom yang ditampilkan di tabel hasil (urutan user). */
   fields: string[]
-  /** Filter unit/jabatan dari FilterBar; q boleh kosong bila ada filter. */
+  /** Filter dinamis per kolom dari FilterBar; q boleh kosong bila ada filter. */
   filters: Filters
   onAdd: (ids: number[]) => void
 }
@@ -42,21 +40,10 @@ export default function SearchPanel({ fields, filters, onAdd }: Props) {
   const seq = useRef(0)
 
   const hasFilter = hasActiveFilters(filters)
-  const { startResize, resetWidth, thStyle, tdStyle } = useResizableColumns()
 
-  const chips: [string, string[]][] = [
-    ['unit', filters.unit],
-    ['unit kerja / satuan kerja', filters.unitKerja],
-    ['jabatan', filters.jabatanNilai],
-    ['jenis jabatan', filters.jenisJabatan],
-    ['status', filters.status],
-    ['golongan', filters.golongan],
-    ['propinsi', filters.propinsi],
-    ['potensi menjabat', filters.potensiMenjabat],
-    ['potensi ppk', filters.potensiPpk],
-    ['potensi bendahara', filters.potensiBendahara],
-    ['potensi ppspm', filters.potensiPpspm],
-  ]
+  const chips: [string, string[]][] = Object.entries(filters).filter(
+    ([, vals]) => vals.length > 0,
+  )
 
   // Debounce 300ms; respons lama diabaikan (seq guard).
   useEffect(() => {
@@ -108,28 +95,28 @@ export default function SearchPanel({ fields, filters, onAdd }: Props) {
   }
 
   return (
-    <section className="flex min-h-0 flex-[3] flex-col rounded-lg border border-slate-200 bg-white shadow-sm">
-      <div className="border-b border-slate-200 px-4 py-3">
-        <div className="flex items-center gap-2">
+    <section className="flex flex-col rounded-lg border border-slate-200 bg-white shadow-sm lg:min-h-0 lg:flex-[3]">
+      <div className="border-b border-slate-200 px-3 py-2.5 lg:px-4 lg:py-3">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder='Cari: nama mendekati / NIP / unit — spasi = semua kata harus cocok, ";" = beberapa query sekaligus — mis. "agus prasarana strategis; budi sumber daya air"'
+            placeholder='Cari Nama/NIP/Unit Organisasi'
             className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-200"
             autoFocus
           />
           <button
             onClick={addAll}
             disabled={!count || addingAll}
-            className="whitespace-nowrap rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+            className="w-full whitespace-nowrap rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300 lg:w-auto"
             title="Tambahkan SEMUA yang cocok (bisa ribuan, mis. satu unit utuh) ke daftar terpilih"
           >
             {addingAll
               ? 'Menambah…'
-              : `Tambah semua yang cocok (${count.toLocaleString('id-ID')})`}
+              : `Tambah semua (${count.toLocaleString('id-ID')})`}
           </button>
         </div>
-        <div className="mt-1.5 flex items-center gap-2 text-xs text-slate-500">
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500 lg:gap-2">
           {(loading || searched) && (
             <span>
               {loading
@@ -152,70 +139,65 @@ export default function SearchPanel({ fields, filters, onAdd }: Props) {
         {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="lg:min-h-0 lg:flex-1 lg:overflow-auto">
         {!fields.length && (
           <p className="p-4 text-sm text-slate-500">
             Centang minimal satu kolom di panel kiri.
           </p>
         )}
         {fields.length > 0 && (
-          <table className="w-full border-collapse text-sm">
-            <thead className="sticky top-0 bg-slate-50 text-left text-xs uppercase text-slate-500">
-              <tr>
-                {fields.map((f) => (
-                  <th
-                    key={f}
-                    className="relative border-b px-3 py-2 font-medium"
-                    title={f}
-                    style={thStyle(f)}
-                  >
-                    {f}
-                    <ResizeHandle
-                      field={f}
-                      onResize={startResize}
-                      onReset={resetWidth}
-                    />
-                  </th>
-                ))}
-                <th className="border-b px-2 py-2 font-medium">Aksi</th>
-              </tr>
-            </thead>
-            <tbody>
-              {results.map((r) => (
-                <tr key={r.id} className="odd:bg-white even:bg-slate-50">
-                  {fields.map((f) => (
-                    <td
-                      key={f}
-                      className="max-w-[22rem] truncate border-b border-slate-100 px-3 py-1.5"
-                      title={cell(r, f)}
-                      style={tdStyle(f)}
-                    >
-                      {cell(r, f)}
-                    </td>
-                  ))}
-                  <td className="border-b border-slate-100 px-2 py-1.5">
-                    <button
-                      onClick={() => add([r.id])}
-                      className="rounded bg-slate-200 px-2 py-0.5 text-xs font-medium hover:bg-blue-600 hover:text-white"
-                      title="Tambahkan ke daftar terpilih"
-                    >
-                      + Tambah
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {searched && !results.length && !loading && (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead className="sticky top-0 bg-slate-50 text-left text-xs uppercase text-slate-500">
                 <tr>
-                  <td
-                    colSpan={fields.length + 1}
-                    className="px-4 py-6 text-center text-sm text-slate-500"
-                  >
-                    Tidak ada yang cocok.
-                  </td>
+                  {fields.map((f) => (
+                    <th
+                      key={f}
+                      className="min-w-[120px] border-b px-3 py-2 font-medium"
+                      title={f}
+                    >
+                      {f}
+                    </th>
+                  ))}
+                  <th className="border-b px-2 py-2 font-medium">Aksi</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {results.map((r) => (
+                  <tr key={r.id} className="odd:bg-white even:bg-slate-50">
+                    {fields.map((f) => (
+                      <td
+                        key={f}
+                        className="min-w-[120px] truncate border-b border-slate-100 px-3 py-1.5"
+                        title={cell(r, f)}
+                      >
+                        {cell(r, f)}
+                      </td>
+                    ))}
+                    <td className="border-b border-slate-100 px-2 py-1.5">
+                      <button
+                        onClick={() => add([r.id])}
+                        className="rounded bg-slate-200 px-2 py-1 text-xs font-medium hover:bg-blue-600 hover:text-white"
+                        title="Tambahkan ke daftar terpilih"
+                      >
+                        + Tambah
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {searched && !results.length && !loading && (
+                  <tr>
+                    <td
+                      colSpan={fields.length + 1}
+                      className="px-4 py-6 text-center text-sm text-slate-500"
+                    >
+                      Tidak ada yang cocok.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </section>

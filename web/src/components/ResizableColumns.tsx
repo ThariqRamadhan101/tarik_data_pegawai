@@ -18,7 +18,7 @@ export function ResizeHandle({
         onReset(field)
       }}
       onClick={(e) => e.stopPropagation()}
-      className="absolute right-0 top-0 h-full w-2 cursor-col-resize hover:bg-blue-300"
+      className="absolute right-0 top-0 h-full w-2 cursor-col-resize z-10 hover:bg-blue-300"
       title="Geser untuk ubah lebar kolom (klik 2x untuk reset)"
     />
   )

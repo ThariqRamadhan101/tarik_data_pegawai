@@ -6,8 +6,46 @@ html,
 body,
 #root {
   height: 100%;
+  overflow: hidden;
+}
+
+/* Mobile: layout dashboard fixed hanya di lg+; di ponsel halaman scroll vertikal. */
+@media (max-width: 1023px) {
+  html,
+  body,
+  #root {
+    height: auto;
+    overflow: visible;
+  }
+
+  #root {
+    min-height: 100dvh;
+  }
 }
 
 body {
   @apply bg-slate-100 text-slate-800;
+}
+
+/* Touch-friendly */
+@media (pointer: coarse) {
+  button, input, select, textarea {
+    min-height: 44px;
+  }
+}
+
+/* Smooth scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }

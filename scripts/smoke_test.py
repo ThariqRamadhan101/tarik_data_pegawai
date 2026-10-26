@@ -83,12 +83,34 @@ def main() -> int:
                 f"{len(facets.get(key, []))} nilai",
             )
 
+        check(
+            "/api/facets teknik ps",
+            set(facets.get("TEKNIK PS", [])) == {"ya", "tidak"},
+            f"{facets.get('TEKNIK PS')}",
+        )
+        check(
+            "/api/facets jenis jabatan2",
+            "JABATAN PERBENDAHARAAN" in facets.get("JENIS JABATAN2", []),
+            f"{len(facets.get('JENIS JABATAN2', []))} nilai",
+        )
+
+        # Facet selektif (lazy-load dari FilterBar): hanya kolom yang diminta.
+        one = get_json(
+            "/api/facets?column=" + urllib.parse.quote("UNIT ORGANISASI")
+        )
+        check(
+            "/api/facets satu kolom (lazy)",
+            list(one.keys()) == ["UNIT ORGANISASI"],
+            f"{len(one)} kolom",
+        )
+
         # Kolom enrichment (skrip enrich_pegawai.py) tersedia di API.
         enrich_cols = [
             "UNIT KERJA / SATUAN KERJA", "POTENSI MENJABAT",
             "SERTIFIKAT PNT", "SERTIFIKAT SNT", "SERTIFIKAT BNT",
             "SERTIFIKAT PBJ", "SERTIFIKAT PPK",
             "POTENSI PPK", "POTENSI BENDAHARA", "POTENSI PPSPM",
+            "PROPINSI2", "TEKNIK PS", "JENIS JABATAN2",
         ]
         check(
             "/api/columns memuat kolom enrichment",
@@ -220,9 +242,30 @@ def main() -> int:
             )
             and all(
                 row["POTENSI MENJABAT"] in ("", "ya", "tidak") for row in r["rows"]
+            )
+            and all(row["TEKNIK PS"] in ("ya", "tidak") for row in r["rows"])
+            and all(
+                row["JENIS JABATAN2"] == "JABATAN PERBENDAHARAAN"
+                if any(
+                    k in (row["JABATAN RANGKAP"] or "").upper()
+                    for k in ("KEPALA", "BENDAHARA", "PEJABAT")
+                )
+                else row["JENIS JABATAN2"] == (row["JENIS JABATAN"] or "").strip()
+                for row in r["rows"]
             ),
             f"{len(r['rows'])} baris",
         )
+
+        # Filter kolom enrichment baru (nilai persis) harus bekerja.
+        for col, val in [("TEKNIK PS", "ya"),
+                         ("JENIS JABATAN2", "JABATAN PERBENDAHARAAN")]:
+            r = get_json("/api/search?" + urllib.parse.urlencode({col: val}))
+            check(
+                "/api/search " + col,
+                r["count"] > 0
+                and all(row[col] == val for row in r["rows"]),
+                f"{r['count']} cocok",
+            )
 
         # Skala besar: satu unit utuh (mis. Bina Marga, ~14k baris) lewat /api/ids.
         BIG = "Direktorat Jenderal Bina Marga"

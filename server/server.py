@@ -113,6 +113,7 @@ def build_conditions(
     potensi_ppk: list[str] | None = None,
     potensi_bendahara: list[str] | None = None,
     potensi_ppspm: list[str] | None = None,
+    colFilters: dict[str, list[str]] | None = None,
     mode: str = "and",
 ) -> tuple[str, list[str]]:
     """Susun WHERE (tanpa ranking) untuk q + grup filter multi-pilihan.
@@ -121,10 +122,12 @@ def build_conditions(
     alternatif, di dalam segmen SEMUA kata harus cocok (AND, gaya Finder).
     Tiap grup filter (multi-nilai persis, jabatan per-kata berisi) di-OR di
     dalam grup, antar grup digabung mode 'and' (default) atau 'or'.
+    `colFilters` = filter tambahan per kolom dari tombol filter di header tabel.
     Mengembalikan ('', []) bila tanpa kondisi.
     """
     if mode not in ("and", "or"):
         raise ValueError("mode harus 'and' atau 'or'")
+    colFilters = colFilters or {}
 
     # Query multi-segmen: 'a b; c d' -> (a AND b) OR (c AND d).
     seg_groups: list[str] = []
@@ -163,6 +166,11 @@ def build_conditions(
         ("POTENSI PPSPM", potensi_ppspm),
     ):
         cond = in_condition(col, values or [])
+        if cond:
+            filters.append(cond)
+    # Grup filter tambahan dari tombol filter per kolom di header tabel.
+    for col, values in colFilters.items():
+        cond = in_condition(col, values)
         if cond:
             filters.append(cond)
     for t in (k.upper() for k in jabatan.split() if k.strip()):
@@ -204,6 +212,7 @@ def search_rows(
     potensi_ppk: list[str] | None = None,
     potensi_bendahara: list[str] | None = None,
     potensi_ppspm: list[str] | None = None,
+    colFilters: dict[str, list[str]] | None = None,
     mode: str = "and",
     limit: int = 50,
 ) -> list[dict]:
@@ -211,7 +220,7 @@ def search_rows(
     where, params = build_conditions(
         q, unit, unit_kerja, jabatan, jabatan_nilai, status, golongan,
         propinsi, jenis_jabatan, potensi_menjabat, potensi_ppk,
-        potensi_bendahara, potensi_ppspm, mode,
+        potensi_bendahara, potensi_ppspm, colFilters, mode,
     )
     if not where:
         return []
@@ -261,13 +270,14 @@ def all_matching_ids(
     potensi_ppk: list[str] | None = None,
     potensi_bendahara: list[str] | None = None,
     potensi_ppspm: list[str] | None = None,
+    colFilters: dict[str, list[str]] | None = None,
     mode: str = "and",
 ) -> list[int]:
     """SEMUA id yang cocok (tanpa limit baris tampil) - untuk 'tambah semua'."""
     where, params = build_conditions(
         q, unit, unit_kerja, jabatan, jabatan_nilai, status, golongan,
         propinsi, jenis_jabatan, potensi_menjabat, potensi_ppk,
-        potensi_bendahara, potensi_ppspm, mode,
+        potensi_bendahara, potensi_ppspm, colFilters, mode,
     )
     if not where:
         return []
@@ -292,12 +302,13 @@ def count_matching(
     potensi_ppk: list[str] | None = None,
     potensi_bendahara: list[str] | None = None,
     potensi_ppspm: list[str] | None = None,
+    colFilters: dict[str, list[str]] | None = None,
     mode: str = "and",
 ) -> int:
     where, params = build_conditions(
         q, unit, unit_kerja, jabatan, jabatan_nilai, status, golongan,
         propinsi, jenis_jabatan, potensi_menjabat, potensi_ppk,
-        potensi_bendahara, potensi_ppspm, mode,
+        potensi_bendahara, potensi_ppspm, colFilters, mode,
     )
     if not where:
         return 0
@@ -306,18 +317,20 @@ def count_matching(
     ).fetchone()[0]
 
 
-def api_facets() -> dict:
-    """Nilai distinct untuk filter multi-pilihan (tanpa nilai kosong)."""
+def api_facets(columns: list[str] | None = None) -> dict:
+    """Nilai distinct untuk filter multi-pilihan, per kolom (dari PRAGMA table_info).
+
+    `columns` membatasi kolom yang dihitung (UI memakai `?column=...` berulang
+    untuk lazy-load); None/kosong = semua kolom data (kompatibel smoke test).
+    """
     con = open_db()
     try:
+        available = data_columns(con)
+        targets = [c for c in (columns or available) if c in available]
         out: dict[str, list[str]] = {}
-        for col in (
-            "UNIT ORGANISASI", "UNIT KERJA / SATUAN KERJA", "NAMA JABATAN",
-            "JENIS JABATAN", "STATUS PEGAWAI", "GOLONGAN", "PROPINSI",
-            "POTENSI MENJABAT", "POTENSI PPK", "POTENSI BENDAHARA", "POTENSI PPSPM",
-        ):
+        for col in targets:
             rows = con.execute(
-                f"SELECT DISTINCT {quote_ident(col)} AS v FROM pegawai ORDER BY v"
+                f"SELECT DISTINCT {quote_ident(col)} AS v FROM pegawai WHERE {quote_ident(col)} IS NOT NULL AND {quote_ident(col)} != '' ORDER BY v"
             ).fetchall()
             out[col] = [r["v"] for r in rows if r["v"]]
         return out
@@ -404,12 +417,21 @@ def filter_cond(qs: dict[str, list[str]]) -> dict:
 
     Nilai multi boleh diulang (?unit=A&unit=B) -> OR dalam grup.
     `jabatan` (kata kunci berisi) tetap tunggal - kompatibilitas lama.
+    Setiap parameter lain yang cocok nama kolom dianggap filter kolom tambahan
+    (?NAMA LENGKAP=Budi&NAMA LENGKAP=Joko) -> OR dalam kolom.
+    Mengembalikan {namedFilters, colFilters, jabatan, mode}.
     """
+    SYSTEM = {"q", "limit", "mode", "jabatan", "ids", "fields"}
+    NAMED = {
+        "unit", "unit_kerja", "jabatan_nilai", "status", "golongan", "propinsi",
+        "jenis_jabatan", "potensi_menjabat", "potensi_ppk",
+        "potensi_bendahara", "potensi_ppspm",
+    }
 
     def multi(key: str) -> list[str]:
         return [v.strip() for v in qs.get(key, []) if v.strip()]
 
-    return dict(
+    named = dict(
         unit=multi("unit"),
         unit_kerja=multi("unit_kerja"),
         jabatan=qs.get("jabatan", [""])[0],
@@ -424,6 +446,16 @@ def filter_cond(qs: dict[str, list[str]]) -> dict:
         potensi_ppspm=multi("potensi_ppspm"),
         mode=qs.get("mode", ["and"])[0].lower(),
     )
+
+    col_filters: dict[str, list[str]] = {}
+    for key, values in qs.items():
+        if key in SYSTEM or key in NAMED:
+            continue
+        vals = multi(key)
+        if vals:
+            col_filters[key] = vals
+
+    return {"namedFilters": named, "colFilters": col_filters}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -467,7 +499,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/columns":
                 self.send_json(api_columns())
             elif path == "/api/facets":
-                self.send_json(api_facets())
+                self.send_json(api_facets(qs.get("column")))
             elif path == "/api/search":
                 q = qs.get("q", [""])[0]
                 limit = min(
@@ -476,8 +508,40 @@ class Handler(BaseHTTPRequestHandler):
                 cond = filter_cond(qs)
                 con = open_db()
                 try:
-                    rows = search_rows(con, q, limit=limit, **cond)
-                    count = count_matching(con, q, **cond)
+                    rows = search_rows(
+                        con, q, limit=limit,
+                        unit=cond["namedFilters"]["unit"],
+                        unit_kerja=cond["namedFilters"]["unit_kerja"],
+                        jabatan=cond["namedFilters"]["jabatan"],
+                        jabatan_nilai=cond["namedFilters"]["jabatan_nilai"],
+                        status=cond["namedFilters"]["status"],
+                        golongan=cond["namedFilters"]["golongan"],
+                        propinsi=cond["namedFilters"]["propinsi"],
+                        jenis_jabatan=cond["namedFilters"]["jenis_jabatan"],
+                        potensi_menjabat=cond["namedFilters"]["potensi_menjabat"],
+                        potensi_ppk=cond["namedFilters"]["potensi_ppk"],
+                        potensi_bendahara=cond["namedFilters"]["potensi_bendahara"],
+                        potensi_ppspm=cond["namedFilters"]["potensi_ppspm"],
+                        colFilters=cond["colFilters"],
+                        mode=cond["namedFilters"]["mode"],
+                    )
+                    count = count_matching(
+                        con, q,
+                        unit=cond["namedFilters"]["unit"],
+                        unit_kerja=cond["namedFilters"]["unit_kerja"],
+                        jabatan=cond["namedFilters"]["jabatan"],
+                        jabatan_nilai=cond["namedFilters"]["jabatan_nilai"],
+                        status=cond["namedFilters"]["status"],
+                        golongan=cond["namedFilters"]["golongan"],
+                        propinsi=cond["namedFilters"]["propinsi"],
+                        jenis_jabatan=cond["namedFilters"]["jenis_jabatan"],
+                        potensi_menjabat=cond["namedFilters"]["potensi_menjabat"],
+                        potensi_ppk=cond["namedFilters"]["potensi_ppk"],
+                        potensi_bendahara=cond["namedFilters"]["potensi_bendahara"],
+                        potensi_ppspm=cond["namedFilters"]["potensi_ppspm"],
+                        colFilters=cond["colFilters"],
+                        mode=cond["namedFilters"]["mode"],
+                    )
                     self.send_json({"query": q, "count": count, "rows": rows})
                 finally:
                     con.close()
@@ -488,7 +552,23 @@ class Handler(BaseHTTPRequestHandler):
                 cond = filter_cond(qs)
                 con = open_db()
                 try:
-                    ids = all_matching_ids(con, q, **cond)
+                    ids = all_matching_ids(
+                        con, q,
+                        unit=cond["namedFilters"]["unit"],
+                        unit_kerja=cond["namedFilters"]["unit_kerja"],
+                        jabatan=cond["namedFilters"]["jabatan"],
+                        jabatan_nilai=cond["namedFilters"]["jabatan_nilai"],
+                        status=cond["namedFilters"]["status"],
+                        golongan=cond["namedFilters"]["golongan"],
+                        propinsi=cond["namedFilters"]["propinsi"],
+                        jenis_jabatan=cond["namedFilters"]["jenis_jabatan"],
+                        potensi_menjabat=cond["namedFilters"]["potensi_menjabat"],
+                        potensi_ppk=cond["namedFilters"]["potensi_ppk"],
+                        potensi_bendahara=cond["namedFilters"]["potensi_bendahara"],
+                        potensi_ppspm=cond["namedFilters"]["potensi_ppspm"],
+                        colFilters=cond["colFilters"],
+                        mode=cond["namedFilters"]["mode"],
+                    )
                     self.send_json({"count": len(ids), "ids": ids})
                 finally:
                     con.close()
@@ -587,7 +667,7 @@ def main() -> None:
     ap.add_argument("--db", default=str(DEFAULT_DB))
     args = ap.parse_args()
 
-    db_path = Path(args.db)
+    db_path = Path(args.db).resolve()
     if not db_path.is_file():
         sys.exit(
             f"{db_path} tidak ada - jalankan: python scripts/extract_pegawai.py"

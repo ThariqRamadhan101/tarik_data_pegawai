@@ -1,8 +1,5 @@
 import { type Row } from '../lib/api'
 import type { SortState } from '../lib/sort'
-import { ResizeHandle } from './ResizableColumns'
-import { useResizableColumns } from '../lib/useResizableColumns'
-
 interface Props {
   fields: string[]
   /** Baris TELAH diurutkan sesuai `sort` oleh App (download pun pakai urutan ini). */
@@ -38,10 +35,9 @@ export default function SelectionTable({
   onHeaderSort,
   onSortReset,
 }: Props) {
-  const { startResize, resetWidth, thStyle, tdStyle } = useResizableColumns()
   return (
-    <section className="flex min-h-0 flex-[2] flex-col rounded-lg border border-slate-200 bg-white shadow-sm">
-      <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-3">
+    <section className="flex flex-col rounded-lg border border-slate-200 bg-white shadow-sm lg:min-h-0 lg:flex-[2]">
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-3">
         <h2 className="text-sm font-semibold">Daftar Terpilih</h2>
         <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
           {count} pegawai
@@ -74,7 +70,7 @@ export default function SelectionTable({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="lg:min-h-0 lg:flex-1 lg:overflow-auto">
         {!fields.length && (
           <p className="p-4 text-sm text-slate-500">
             Centang kolom di panel kiri untuk menampilkan daftar terpilih.
@@ -86,87 +82,82 @@ export default function SelectionTable({
           </p>
         )}
         {fields.length > 0 && count > 0 && (
-          <table className="w-full border-collapse text-sm">
-            <thead className="sticky top-0 bg-slate-50 text-left text-xs uppercase text-slate-500">
-              <tr>
-                {fields.map((f) => (
-                  <th
-                    key={f}
-                    className="relative border-b font-medium"
-                    title={f}
-                    style={thStyle(f)}
-                  >
-                    <button
-                      onClick={() => onHeaderSort(f)}
-                      className="flex w-full items-center gap-1 px-3 py-2 hover:bg-slate-100"
-                      title={
-                        sort?.field === f && sort.dir === 'asc'
-                          ? 'Urutkan Z→A'
-                          : 'Urutkan A→Z'
-                      }
-                    >
-                      {f}
-                      <span className="text-[10px] text-blue-700">
-                        {sort?.field === f ? (sort.dir === 'asc' ? '▲' : '▼') : ''}
-                      </span>
-                    </button>
-                    <ResizeHandle
-                      field={f}
-                      onResize={startResize}
-                      onReset={resetWidth}
-                    />
-                  </th>
-                ))}
-                <th className="border-b px-2 py-2 font-medium">Aksi</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className="odd:bg-white even:bg-slate-50">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead className="sticky top-0 bg-slate-50 text-left text-xs uppercase text-slate-500">
+                <tr>
                   {fields.map((f) => (
-                    <td
+                    <th
                       key={f}
-                      className="max-w-[22rem] truncate border-b border-slate-100 px-3 py-1.5"
-                      title={cell(r, f)}
-                      style={tdStyle(f)}
+                      className="min-w-[120px] border-b font-medium"
+                      title={f}
                     >
-                      {cell(r, f)}
-                    </td>
+                      <button
+                        onClick={() => onHeaderSort(f)}
+                        className="flex w-full items-center gap-1 px-3 py-2 hover:bg-slate-100"
+                        title={
+                          sort?.field === f && sort.dir === 'asc'
+                            ? 'Urutkan Z→A'
+                            : 'Urutkan A→Z'
+                        }
+                      >
+                        {f}
+                        <span className="text-[10px] text-blue-700">
+                          {sort?.field === f ? (sort.dir === 'asc' ? '▲' : '▼') : ''}
+                        </span>
+                      </button>
+                    </th>
                   ))}
-                  <td className="border-b border-slate-100 px-2 py-1.5">
-                    <button
-                      onClick={() => onRemove(r.id)}
-                      className="rounded bg-slate-200 px-2 py-0.5 text-xs font-medium hover:bg-red-600 hover:text-white"
-                      title="Hapus dari daftar"
+                  <th className="border-b px-2 py-2 font-medium">Aksi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id} className="odd:bg-white even:bg-slate-50">
+                    {fields.map((f) => (
+                      <td
+                        key={f}
+                        className="min-w-[120px] truncate border-b border-slate-100 px-3 py-1.5"
+                        title={cell(r, f)}
+                      >
+                        {cell(r, f)}
+                      </td>
+                    ))}
+                    <td className="border-b border-slate-100 px-2 py-1.5">
+                      <button
+                        onClick={() => onRemove(r.id)}
+                        className="rounded bg-slate-200 px-2 py-1 text-xs font-medium hover:bg-red-600 hover:text-white"
+                        title="Hapus dari daftar"
+                      >
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {loading && (
+                  <tr>
+                    <td
+                      colSpan={fields.length + 1}
+                      className="px-4 py-4 text-center text-sm text-slate-500"
                     >
-                      ✕
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {loading && (
-                <tr>
-                  <td
-                    colSpan={fields.length + 1}
-                    className="px-4 py-4 text-center text-sm text-slate-500"
-                  >
-                    Memuat…
-                  </td>
-                </tr>
-              )}
-              {!loading && rows.length < count && (
-                <tr>
-                  <td
-                    colSpan={fields.length + 1}
-                    className="px-4 py-3 text-center text-xs text-amber-600"
-                  >
-                    {count - rows.length} id tidak ditemukan di database -
-                    kemungkinan data sudah diekstrak ulang. Cari ulang.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                      Memuat…
+                    </td>
+                  </tr>
+                )}
+                {!loading && rows.length < count && (
+                  <tr>
+                    <td
+                      colSpan={fields.length + 1}
+                      className="px-4 py-3 text-center text-xs text-amber-600"
+                    >
+                      {count - rows.length} id tidak ditemukan di database -
+                      kemungkinan data sudah diekstrak ulang. Cari ulang.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </section>

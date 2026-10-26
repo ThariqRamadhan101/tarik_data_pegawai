@@ -1,20 +1,48 @@
-import { useEffect, useRef, useState } from 'react'
-import { EMPTY_FILTERS, hasActiveFilters, type Facets, type Filters } from '../lib/api'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  EMPTY_FILTERS,
+  getFacets,
+  hasActiveFilters,
+  type Facets,
+  type Filters,
+} from '../lib/api'
 
 interface Props {
-  facets: Facets
+  /** Semua kolom data yang tersedia (dari /api/columns). */
+  columns: string[]
   filters: Filters
   onChange: (f: Filters) => void
 }
 
 const BTN_CLS =
   'rounded-md border border-slate-300 bg-white px-2 py-1.5 text-left text-sm hover:border-slate-400 focus:border-blue-500 focus:outline-none'
+const SELECT_CLS =
+  'max-w-[16rem] truncate rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm hover:border-slate-400 focus:border-blue-500 focus:outline-none'
+
+/** Kolom yang sudah terpasang sebagai filter saat halaman pertama dibuka. */
+const DEFAULT_FILTER_COLUMNS = [
+  'UNIT ORGANISASI',
+  'UNIT KERJA / SATUAN KERJA',
+  'JENIS JABATAN',
+  'NAMA JABATAN',
+  'STATUS PEGAWAI',
+  'GOLONGAN',
+  'PROPINSI',
+  'POTENSI MENJABAT',
+  'POTENSI PPK',
+  'POTENSI BENDAHARA',
+  'POTENSI PPSPM',
+]
 
 interface MultiProps {
   label: string
   options: string[]
   selected: string[]
   onChange: (next: string[]) => void
+  /** Bila diisi, tampilkan tombol × untuk melepas kolom filter ini. */
+  onRemove?: () => void
+  /** Pilihan masih diambil dari server. */
+  loading?: boolean
   /** Lebar total (dropdown absolute mengikuti lebar ini). */
   width?: string
 }
@@ -23,7 +51,15 @@ interface MultiProps {
  * Dropdown multi-pilihan: daftar checkbox + kotak cari (untuk daftar panjang
  * seperti 665 nama jabatan). Nilai OR di dalam grup; antar grup selalu AND.
  */
-function MultiSelect({ label, options, selected, onChange, width = 'w-64' }: MultiProps) {
+function MultiSelect({
+  label,
+  options,
+  selected,
+  onChange,
+  onRemove,
+  loading = false,
+  width = 'w-64',
+}: MultiProps) {
   const [open, setOpen] = useState(false)
   const [text, setText] = useState('')
   const rootRef = useRef<HTMLDivElement>(null)
@@ -44,18 +80,43 @@ function MultiSelect({ label, options, selected, onChange, width = 'w-64' }: Mul
     )
 
   const needle = text.trim().toUpperCase()
-  const shown = needle
-    ? options.filter((o) => o.toUpperCase().includes(needle))
-    : options
+  const MAX_SHOW = 50
+  const showAll = needle.length > 0 || options.length <= MAX_SHOW
+  const shown = showAll
+    ? needle
+      ? options.filter((o) => o.toUpperCase().includes(needle))
+      : options
+    : []
+  const emptyMsg =
+    options.length > MAX_SHOW && needle.length === 0
+      ? "Ketik untuk mencari…"
+      : "Tidak ada yang cocok."
 
   return (
     <div ref={rootRef} className={`relative flex flex-col gap-0.5 ${width}`}>
-      <span className="text-xs font-medium text-slate-600">
-        {label}
-        {selected.length > 0 && (
-          <span className="ml-1 font-semibold text-blue-600">({selected.length})</span>
+      <div className="flex items-center gap-1">
+        <span
+          className="min-w-0 flex-1 truncate text-xs font-medium text-slate-600"
+          title={label}
+        >
+          {label}
+          {selected.length > 0 && (
+            <span className="ml-1 font-semibold text-blue-600">
+              ({selected.length})
+            </span>
+          )}
+        </span>
+        {onRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            title={`Hapus filter ${label}`}
+            className="shrink-0 rounded px-1 text-slate-400 hover:bg-red-50 hover:text-red-600"
+          >
+            ×
+          </button>
         )}
-      </span>
+      </div>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -69,8 +130,8 @@ function MultiSelect({ label, options, selected, onChange, width = 'w-64' }: Mul
             : `${selected.length} nilai dipilih`}
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-20 mt-1 w-full rounded-md border border-slate-300 bg-white shadow-lg">
-          {options.length > 8 && (
+        <div className="absolute left-0 top-full z-30 mt-1 w-full rounded-md border border-slate-300 bg-white shadow-lg">
+          {!loading && options.length > 8 && (
             <input
               value={text}
               onChange={(e) => setText(e.target.value)}
@@ -80,33 +141,41 @@ function MultiSelect({ label, options, selected, onChange, width = 'w-64' }: Mul
             />
           )}
           <div className="max-h-60 overflow-auto py-1">
-            {shown.map((o) => (
-              <label
-                key={o}
-                className="flex cursor-pointer items-start gap-2 px-2 py-1 text-sm hover:bg-slate-50"
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.includes(o)}
-                  onChange={() => toggle(o)}
-                  className="mt-0.5"
-                />
-                <span className="min-w-0 break-words">{o}</span>
-              </label>
-            ))}
-            {!shown.length && (
-              <p className="px-2 py-1.5 text-sm text-slate-400">Tidak ada yang cocok.</p>
+            {loading ? (
+              <p className="px-2 py-1.5 text-sm text-slate-400">Memuat pilihan…</p>
+            ) : (
+              <>
+                {shown.map((o) => (
+                  <label
+                    key={o}
+                    className="flex cursor-pointer items-start gap-2 px-2 py-1 text-sm hover:bg-slate-50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(o)}
+                      onChange={() => toggle(o)}
+                      className="mt-0.5"
+                    />
+                    <span className="min-w-0 break-words">{o}</span>
+                  </label>
+                ))}
+                {!shown.length && (
+                  <p className="px-2 py-1.5 text-sm text-slate-400">{emptyMsg}</p>
+                )}
+              </>
             )}
           </div>
-          <div className="border-t border-slate-200 px-2 py-1.5 text-xs">
-            <button
-              type="button"
-              onClick={() => onChange([])}
-              className="text-slate-500 hover:text-slate-700"
-            >
-              Kosongkan
-            </button>
-          </div>
+          {!loading && (
+            <div className="border-t border-slate-200 px-2 py-1.5 text-xs">
+              <button
+                type="button"
+                onClick={() => onChange([])}
+                className="text-slate-500 hover:text-slate-700"
+              >
+                Kosongkan
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -114,101 +183,136 @@ function MultiSelect({ label, options, selected, onChange, width = 'w-64' }: Mul
 }
 
 /**
- * Filter terstruktur di atas kotak pencarian: unit organisasi, unit kerja,
- * jabatan (nilai persis), status pegawai, golongan, propinsi - semua
- * multi-pilihan; antar grup selalu digabung AND.
+ * Filter dinamis: user memilih sendiri kolom mana yang ingin difilter.
+ * Nilai OR di dalam satu kolom, AND antar kolom. Opsi filter diambil
+ * lazy per kolom (`/api/facets?column=...`) agar payload awal kecil.
  */
-export default function FilterBar({ facets, filters, onChange }: Props) {
-  const set = (patch: Partial<Filters>) => onChange({ ...filters, ...patch })
+export default function FilterBar({ columns, filters, onChange }: Props) {
+  const [active, setActive] = useState<string[]>(DEFAULT_FILTER_COLUMNS)
+  const [open, setOpen] = useState(false)
+  const [facets, setFacets] = useState<Facets>({})
+  const [loading, setLoading] = useState<Record<string, boolean>>({})
+  const requested = useRef<Set<string>>(new Set())
+
+  const loadFacets = useCallback((cols: string[]) => {
+    const need = cols.filter((c) => c && !requested.current.has(c))
+    if (!need.length) return
+    need.forEach((c) => requested.current.add(c))
+    setLoading((prev) => {
+      const next = { ...prev }
+      need.forEach((c) => {
+        next[c] = true
+      })
+      return next
+    })
+    getFacets(need)
+      .then((data) => setFacets((prev) => ({ ...prev, ...data })))
+      .catch(() => {
+        // Izinkan percobaan ulang saat kolom ini diminta lagi.
+        need.forEach((c) => requested.current.delete(c))
+      })
+      .finally(() => {
+        setLoading((prev) => {
+          const next = { ...prev }
+          need.forEach((c) => {
+            delete next[c]
+          })
+          return next
+        })
+      })
+  }, [])
+
+  // Muat opsi untuk kolom default begitu daftar kolom tersedia.
+  useEffect(() => {
+    if (!columns.length) return
+    loadFacets(DEFAULT_FILTER_COLUMNS.filter((c) => columns.includes(c)))
+  }, [columns, loadFacets])
+
+  const activeCols = active.filter((c) => columns.includes(c))
+  const available = columns.filter((c) => !active.includes(c))
+
+  const addColumn = (col: string) => {
+    if (!col) return
+    setActive((prev) => (prev.includes(col) ? prev : [...prev, col]))
+    loadFacets([col])
+    setOpen(true)
+  }
+
+  const removeColumn = (col: string) => {
+    setActive((prev) => prev.filter((c) => c !== col))
+    if (filters[col]) {
+      const next = { ...filters }
+      delete next[col]
+      onChange(next)
+    }
+  }
+
+  const setValues = (col: string, vals: string[]) => {
+    const next = { ...filters }
+    if (vals.length === 0) delete next[col]
+    else next[col] = vals
+    onChange(next)
+  }
 
   return (
-    <div className="flex shrink-0 flex-wrap items-start gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
-      <MultiSelect
-        label="Unit Organisasi"
-        options={facets.unitOrganisasi}
-        selected={filters.unit}
-        onChange={(v) => set({ unit: v })}
-        width="w-72"
-      />
-      <MultiSelect
-        label="Unit Kerja / Satuan Kerja"
-        options={facets.unitKerja}
-        selected={filters.unitKerja}
-        onChange={(v) => set({ unitKerja: v })}
-        width="w-72"
-      />
-      <MultiSelect
-        label="Jenis Jabatan"
-        options={facets.jenisJabatan}
-        selected={filters.jenisJabatan}
-        onChange={(v) => set({ jenisJabatan: v })}
-        width="w-44"
-      />
-      <MultiSelect
-        label="Jabatan"
-        options={facets.namaJabatan}
-        selected={filters.jabatanNilai}
-        onChange={(v) => set({ jabatanNilai: v })}
-        width="w-72"
-      />
-      <MultiSelect
-        label="Status Pegawai"
-        options={facets.statusPegawai}
-        selected={filters.status}
-        onChange={(v) => set({ status: v })}
-        width="w-44"
-      />
-      <MultiSelect
-        label="Golongan"
-        options={facets.golongan}
-        selected={filters.golongan}
-        onChange={(v) => set({ golongan: v })}
-        width="w-40"
-      />
-      <MultiSelect
-        label="Propinsi"
-        options={facets.propinsi}
-        selected={filters.propinsi}
-        onChange={(v) => set({ propinsi: v })}
-        width="w-56"
-      />
-      <MultiSelect
-        label="Potensi Menjabat"
-        options={facets.potensiMenjabat}
-        selected={filters.potensiMenjabat}
-        onChange={(v) => set({ potensiMenjabat: v })}
-        width="w-40"
-      />
-      <MultiSelect
-        label="Potensi PPK"
-        options={facets.potensiPpk}
-        selected={filters.potensiPpk}
-        onChange={(v) => set({ potensiPpk: v })}
-        width="w-36"
-      />
-      <MultiSelect
-        label="Potensi Bendahara"
-        options={facets.potensiBendahara}
-        selected={filters.potensiBendahara}
-        onChange={(v) => set({ potensiBendahara: v })}
-        width="w-44"
-      />
-      <MultiSelect
-        label="Potensi PPSPM"
-        options={facets.potensiPpspm}
-        selected={filters.potensiPpspm}
-        onChange={(v) => set({ potensiPpspm: v })}
-        width="w-40"
-      />
-
-      {hasActiveFilters(filters) && (
+    <div className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-3 shadow-sm lg:px-4">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <h2 className="text-sm font-semibold">Filter</h2>
         <button
-          onClick={() => onChange({ ...EMPTY_FILTERS })}
-          className="mt-5 rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-600 hover:bg-slate-100"
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 lg:hidden"
+          aria-expanded={open}
+          aria-controls="filter-body"
         >
-          Reset filter
+          {open ? 'Sembunyikan' : 'Tampilkan'}
         </button>
-      )}
+        {hasActiveFilters(filters) && (
+          <button
+            onClick={() => onChange({ ...EMPTY_FILTERS })}
+            className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100"
+          >
+            Reset filter
+          </button>
+        )}
+        <label className="ml-auto flex items-center gap-1.5 text-xs text-slate-500">
+          <span className="whitespace-nowrap">Tambah filter kolom</span>
+          <select
+            value=""
+            onChange={(e) => addColumn(e.target.value)}
+            className={SELECT_CLS}
+            title="Pilih kolom yang ingin difilter"
+          >
+            <option value="">Pilih kolom…</option>
+            {available.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div
+        id="filter-body"
+        className={`${open ? 'flex' : 'hidden'} flex-wrap items-start gap-3 lg:flex`}
+      >
+        {activeCols.map((col) => (
+          <MultiSelect
+            key={col}
+            label={col}
+            options={facets[col] ?? []}
+            selected={filters[col] ?? []}
+            onChange={(v) => setValues(col, v)}
+            onRemove={() => removeColumn(col)}
+            loading={!!loading[col]}
+          />
+        ))}
+        {activeCols.length === 0 && (
+          <p className="text-xs text-slate-500">
+            Belum ada kolom filter. Pilih kolom di atas untuk memulai.
+          </p>
+        )}
+      </div>
     </div>
   )
 }

@@ -1,7 +1,8 @@
 """Enrichment database/pegawai.db: kolom turunan (satuan kerja, potensi, sertifikat).
 
 Idempotent - aman dijalankan ulang (dan WAJIB dijalankan ulang setelah
-re-extract, karena extract menghapus kolom enrichment).
+re-extract, karena extract menghapus kolom enrichment). Duplikat NIP dihapus
+(baris dengan id terkecil dipertahankan) sebelum kolom turunan dihitung.
 
 Sumber sertifikat (per NIP):
   - PNT/SNT/BNT : database/sertifikat/rev4_Database Sertifikat Kompetensi ...xlsx
@@ -11,10 +12,14 @@ Sumber sertifikat (per NIP):
                    sheet PBJ & PPK (header baris 3): NIP=G, NOMOR=B.
 
 Kolom yang dibuat/diisi ulang (semua TEXT):
-  UNIT KERJA / SATUAN KERJA, POTENSI MENJABAT, SERTIFIKAT PNT/SNT/BNT/PBJ/PPK
+  UNIT KERJA / SATUAN KERJA, URUTAN UNIT ORGANISASI, URUTAN UNKER / SATKER PS,
+  POTENSI MENJABAT, SERTIFIKAT PNT/SNT/BNT/PBJ/PPK
   (isi nomor sertifikat; >1 nomor per NIP digabung "; "; kosong = tidak punya),
   POTENSI PPK (PNT dan (PBJ atau PPK)), POTENSI BENDAHARA (BNT),
-  POTENSI PPSPM (SNT).
+  POTENSI PPSPM (SNT), PROPINSI2,
+  TEKNIK PS (ya bila RIWAYAT PENDIDIKAN memuat istilah teknik/program studi
+  terkait, Indonesia/Inggris), JENIS JABATAN2 (salinan JENIS JABATAN, diganti
+  JABATAN PERBENDAHARAAN bila JABATAN RANGKAP memuat KEPALA/BENDAHARA/PEJABAT).
 
 Kolom lama "SATUAN KERJA" (versi sebelumnya) otomatis di-rename ke nama baru.
 
@@ -44,9 +49,80 @@ FILE_PBJ_PPK = "SERTIFIKAT PBJ DAN PPK TA. 2026.xlsx"
 
 SERTIFIKAT_COLS = ["SERTIFIKAT PNT", "SERTIFIKAT SNT", "SERTIFIKAT BNT",
                    "SERTIFIKAT PBJ", "SERTIFIKAT PPK"]
-ENRICH_COLS = ["UNIT KERJA / SATUAN KERJA", "POTENSI MENJABAT", *SERTIFIKAT_COLS,
-               "POTENSI PPK", "POTENSI BENDAHARA", "POTENSI PPSPM"]
+URUTAN_COLS = ["URUTAN UNIT ORGANISASI", "URUTAN UNKER / SATKER PS"]
+ENRICH_COLS = ["UNIT KERJA / SATUAN KERJA", *URUTAN_COLS, "POTENSI MENJABAT",
+               *SERTIFIKAT_COLS,
+               "POTENSI PPK", "POTENSI BENDAHARA", "POTENSI PPSPM", "PROPINSI2",
+               "TEKNIK PS", "JENIS JABATAN2"]
 LEGACY_SATUAN = "SATUAN KERJA"  # nama kolom lama -> di-rename saat migrasi
+
+# Urutan baku unit organisasi (angka 1-10 sesuai urutan di organisasi).
+URUTAN_UNIT_ORGANISASI = (
+    "Sekretariat Jenderal",
+    "Direktorat Jenderal Sumber Daya Air",
+    "Direktorat Jenderal Bina Marga",
+    "Direktorat Jenderal Cipta Karya",
+    "Direktorat Jenderal Prasarana Strategis",
+    "Direktorat Jenderal Bina Konstruksi",
+    "Direktorat Jenderal Pembiayaan Infrastruktur Pekerjaan Umum",
+    "Inspektorat Jenderal",
+    "Badan Pengembangan Infrastruktur Wilayah",
+    "Badan Pengembangan Sumber Daya Manusia",
+)
+
+# Urutan unit kerja/satuan kerja di Direktorat Jenderal Prasarana Strategis.
+URUTAN_UNKER_PS = (
+    "Sekretariat Direktorat Jenderal Prasarana Strategis",
+    "Direktorat Sistem dan Strategi Penyelenggaraan Prasarana Strategis",
+    "Direktorat Infrastruktur Dukungan Pendidikan",
+    "Direktorat Infrastruktur Dukungan Perekonomian, Peribadatan, Kesehatan, "
+    "Olahraga dan Sosial Budaya",
+    "Direktorat Kepatuhan Intern",
+    "Pelaksanaan Prasarana Strategis Aceh",
+    "Pelaksanaan Prasarana Strategis Sumatera Utara",
+    "Pelaksanaan Prasarana Strategis Sumatera Barat",
+    "Pelaksanaan Prasarana Strategis Riau",
+    "Pelaksanaan Prasarana Strategis Kepulauan Riau",
+    "Pelaksanaan Prasarana Strategis Jambi",
+    "Pelaksanaan Prasarana Strategis Bengkulu",
+    "Pelaksanaan Prasarana Strategis Sumatera Selatan",
+    "Pelaksanaan Prasarana Strategis Kepulauan Bangka Belitung",
+    "Pelaksanaan Prasarana Strategis Lampung",
+    "Pelaksanaan Prasarana Strategis Jakarta Metropolitan",
+    "Pelaksanaan Prasarana Strategis Jawa Barat",
+    "Pelaksanaan Prasarana Strategis Banten",
+    "Pelaksanaan Prasarana Strategis Jawa Tengah",
+    "Pelaksanaan Prasarana Strategis D.I. Yogyakarta",
+    "Pelaksanaan Prasarana Strategis Jawa Timur",
+    "Pelaksanaan Prasarana Strategis Bali",
+    "Pelaksanaan Prasarana Strategis Nusa Tenggara Barat",
+    "Pelaksanaan Prasarana Strategis Nusa Tenggara Timur",
+    "Pelaksanaan Prasarana Strategis Kalimantan Barat",
+    "Pelaksanaan Prasarana Strategis Kalimantan Tengah",
+    "Pelaksanaan Prasarana Strategis Kalimantan Selatan",
+    "Pelaksanaan Prasarana Strategis Kalimantan Timur",
+    "Pelaksanaan Prasarana Strategis Kalimantan Utara",
+    "Pelaksanaan Prasarana Strategis Sulawesi Utara",
+    "Pelaksanaan Prasarana Strategis Sulawesi Tengah",
+    "Pelaksanaan Prasarana Strategis Sulawesi Selatan",
+    "Pelaksanaan Prasarana Strategis Sulawesi Tenggara",
+    "Pelaksanaan Prasarana Strategis Gorontalo",
+    "Pelaksanaan Prasarana Strategis Sulawesi Barat",
+    "Pelaksanaan Prasarana Strategis Maluku",
+    "Pelaksanaan Prasarana Strategis Maluku Utara",
+    "Pelaksanaan Prasarana Strategis Papua",
+    "Pelaksanaan Prasarana Strategis Papua Barat",
+)
+
+URUTAN_UNIT_ORGANISASI_MAP = {
+    " ".join(nama.split()).casefold(): str(i)
+    for i, nama in enumerate(URUTAN_UNIT_ORGANISASI, start=1)
+}
+URUTAN_UNKER_PS_MAP = {
+    " ".join(nama.split()).casefold(): str(i)
+    for i, nama in enumerate(URUTAN_UNKER_PS, start=1)
+}
+
 
 SEKRETARIAT_PS = "Sekretariat Direktorat Jenderal Prasarana Strategis"
 # "Pelaksanaan Prasarana Strategis <Wilayah>" - wilayah bisa ada newline.
@@ -59,6 +135,30 @@ RE_ROMAWI = re.compile(r"^(I|II|III|IV|V|VI|VII|VIII|IX|X)$", re.IGNORECASE)
 KATA_TEKNIK = ("PELAKSANA TEKNIK", "PETUGAS TEKNIK", "PENATA TEKNIK")
 KATA_PEMIMPIN = ("DIREKTUR", "SEKRETARIS", "KEPALA", "BENDAHARA",
                  "BENDAHARAWAN", "PEJABAT")
+
+# Istilah program studi untuk TEKNIK PS (Indonesia + padanan Inggris).
+KATA_TEKNIK_PS = (
+    "Arsitektur", "Architecture",
+    "Sipil", "Civil",
+    "Mesin", "Mechanical",
+    "Elektro", "Electrical",
+    "Perencanaan", "Planning",
+    "Planologi", "Urban and Regional Planning",
+    "Desain Interior", "Interior Design",
+    "Teknik Fisika", "Engineering Physics",
+    "Konstruksi", "Construction",
+    "Gedung", "Building",
+    "Lingkungan", "Environmental",
+    "Infrastruktur", "Infrastructure",
+    "Geologi", "Geology",
+    "Geografi", "Geography",
+    "Magister Teknik Studi Pembangunan",
+    "Master of Engineering in Development Studies",
+    "Geodesi", "Geodetic",
+)
+
+# JENIS JABATAN2 -> JABATAN PERBENDAHARAAN bila JABATAN RANGKAP memuat ini.
+KATA_JENIS_JABATAN2 = ("KEPALA", "BENDAHARA", "PEJABAT")
 
 
 def norm_nip(v: object) -> str:
@@ -74,6 +174,33 @@ def valid_nip(s: str) -> bool:
     return len(s) >= 10 and s.isdigit()
 
 
+def norm_teks(v: object) -> str:
+    """Uppercase, non-alfanumerik -> spasi, lalu rapikan spasi.
+
+    Dipakai agar variasi spasi/tanda baca di RIWAYAT PENDIDIKAN tetap cocok,
+    mis. "Magister Teknik, Studi Pembangunan" == "MAGISTER TEKNIK STUDI
+    PEMBANGUNAN".
+    """
+    s = re.sub(r"[^A-Z0-9]+", " ", str(v or "").upper())
+    return " ".join(s.split())
+
+
+KATA_TEKNIK_PS_NORM = tuple(norm_teks(k) for k in KATA_TEKNIK_PS)
+
+
+def teknik_ps(riwayat_pendidikan: str) -> str:
+    """ya bila RIWAYAT PENDIDIKAN memuat salah satu istilah KATA_TEKNIK_PS."""
+    teks = norm_teks(riwayat_pendidikan)
+    return "ya" if any(k in teks for k in KATA_TEKNIK_PS_NORM) else "tidak"
+
+
+def jenis_jabatan2(jenis_jabatan: str, jabatan_rangkap: str) -> str:
+    """Salin JENIS JABATAN; ganti bila JABATAN RANGKAP memuat kata terkait."""
+    if any(k in (jabatan_rangkap or "").upper() for k in KATA_JENIS_JABATAN2):
+        return "JABATAN PERBENDAHARAAN"
+    return (jenis_jabatan or "").strip()
+
+
 def satuan_kerja(unit_kerja: str, jabatan_lengkap: str) -> str:
     # Hanya baris sekretariat PS yang dipecah ke wilayah; unit lain disalin
     # apa adanya (aturan ini TIDAK berlaku di luar sekretariat PS).
@@ -84,6 +211,20 @@ def satuan_kerja(unit_kerja: str, jabatan_lengkap: str) -> str:
         if wilayah and not RE_ROMAWI.match(wilayah):
             return f"Pelaksanaan Prasarana Strategis {wilayah}"
     return SEKRETARIAT_PS
+
+
+def wilayah_ps(jabatan_lengkap: str) -> str:
+    """Ekstrak nama wilayah dari 'Pelaksanaan Prasarana Strategis {wilayah}'.
+
+    Hanya untuk baris sekretariat PS. Angka romawi (I/II/III = nomor PPK)
+    dilewati; ambil kecocokan wilayah berikutnya. Hasil upper-case, tanpa
+    menambah wilayah yang tidak ada di sumber.
+    """
+    for m in RE_PS.finditer(jabatan_lengkap):
+        wilayah = " ".join(m.group(1).split())
+        if wilayah and not RE_ROMAWI.match(wilayah):
+            return wilayah.upper()
+    return ""
 
 
 def potensi_menjabat(jenis_jabatan: str, jabatan_lengkap: str,
@@ -183,15 +324,17 @@ def main() -> None:
         sert = load_sertifikat()
         rows = con.execute(
             'SELECT id, NIP, "UNIT KERJA", "JABATAN LENGKAP", "JENIS JABATAN",'
-            ' "JABATAN RANGKAP" FROM pegawai'
+            ' "JABATAN RANGKAP", "PROPINSI", "RIWAYAT PENDIDIKAN" FROM pegawai'
         ).fetchall()
 
         stats = {"satuan_ps": 0, "satuan_fallback": 0,
-                 "menjabat_ya": 0, "menjabat_tidak": 0, "menjabat_kosong": 0}
+                 "menjabat_ya": 0, "menjabat_tidak": 0, "menjabat_kosong": 0,
+                 "propinsi2_ps": 0, "propinsi2_salin": 0}
         updates = []
         for r in rows:
             sk = satuan_kerja(r["UNIT KERJA"] or "", r["JABATAN LENGKAP"] or "")
-            if (r["UNIT KERJA"] or "").strip().upper() == SEKRETARIAT_PS.upper():
+            is_ps = (r["UNIT KERJA"] or "").strip().upper() == SEKRETARIAT_PS.upper()
+            if is_ps:
                 if sk.upper() != SEKRETARIAT_PS.upper():
                     stats["satuan_ps"] += 1
                 else:
@@ -199,10 +342,22 @@ def main() -> None:
             pm = potensi_menjabat(r["JENIS JABATAN"] or "", r["JABATAN LENGKAP"] or "",
                             r["JABATAN RANGKAP"] or "")
             stats["menjabat_" + (pm or "kosong")] += 1
+            tp = teknik_ps(r["RIWAYAT PENDIDIKAN"] or "")
+            jj2 = jenis_jabatan2(r["JENIS JABATAN"] or "", r["JABATAN RANGKAP"] or "")
 
             nip = norm_nip(r["NIP"] or "")
             nomor = {t: "; ".join(sert[t].get(nip, [])) for t in sert}
             punya = {t: bool(nomor[t]) for t in sert}
+
+            # PROPINSI2: baris sekretariat PS diisi nama wilayah (upper-case)
+            # dari JABATAN LENGKAP; baris lain salin PROPINSI dari sumber.
+            if is_ps:
+                p2 = wilayah_ps(r["JABATAN LENGKAP"] or "")
+                stats["propinsi2_ps"] += 1
+            else:
+                p2 = r["PROPINSI"] or ""
+                stats["propinsi2_salin"] += 1
+
             updates.append((
                 sk, pm,
                 nomor["PNT"], nomor["SNT"], nomor["BNT"],
@@ -210,6 +365,9 @@ def main() -> None:
                 "ya" if punya["PNT"] and (punya["PBJ"] or punya["PPK"]) else "tidak",
                 "ya" if punya["BNT"] else "tidak",
                 "ya" if punya["SNT"] else "tidak",
+                p2,
+                tp,
+                jj2,
                 r["id"],
             ))
 
@@ -218,7 +376,8 @@ def main() -> None:
             ' "POTENSI MENJABAT"=?,'
             ' "SERTIFIKAT PNT"=?, "SERTIFIKAT SNT"=?, "SERTIFIKAT BNT"=?,'
             ' "SERTIFIKAT PBJ"=?, "SERTIFIKAT PPK"=?, "POTENSI PPK"=?,'
-            ' "POTENSI BENDAHARA"=?, "POTENSI PPSPM"=? WHERE id=?',
+            ' "POTENSI BENDAHARA"=?, "POTENSI PPSPM"=?, "PROPINSI2"=?,'
+            ' "TEKNIK PS"=?, "JENIS JABATAN2"=? WHERE id=?',
             updates,
         )
 
@@ -241,8 +400,15 @@ def main() -> None:
         n_rows = sum(1 for u in updates if u[2 + ("PNT", "SNT", "BNT", "PBJ", "PPK").index(t)])
         print(f"sertifikat {t:<4}: {len(sert[t])} NIP di sumber,"
               f" {n_rows} baris pegawai terisi nomor")
-    for i, name in ((7, "POTENSI PPK"), (8, "POTENSI BENDAHARA"), (9, "POTENSI PPSPM")):
+    for i, name in ((7, "POTENSI PPK"), (8, "POTENSI BENDAHARA"),
+                    (9, "POTENSI PPSPM"), (11, "TEKNIK PS")):
         print(f"{name:<16}: {sum(1 for u in updates if u[i] == 'ya')} ya")
+    print(f"propinsi2: {stats['propinsi2_ps']} PS wilayah,"
+          f" {stats['propinsi2_salin']} salin PROPINSI,"
+          f" sisanya kosong")
+    print(f"JENIS JABATAN2 : "
+          f"{sum(1 for u in updates if u[12] == 'JABATAN PERBENDAHARAAN')}"
+          f" JABATAN PERBENDAHARAAN")
 
 
 if __name__ == "__main__":

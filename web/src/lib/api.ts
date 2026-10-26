@@ -33,103 +33,38 @@ export async function getColumns(): Promise<string[]> {
   return r.columns
 }
 
-/** Nilai distinct untuk filter multi-pilihan. */
+/** Nilai distinct untuk filter multi-pilihan, per kolom (semua kolom data). */
 export interface Facets {
-  unitOrganisasi: string[]
-  unitKerja: string[]
-  namaJabatan: string[]
-  jenisJabatan: string[]
-  statusPegawai: string[]
-  golongan: string[]
-  propinsi: string[]
-  potensiMenjabat: string[]
-  potensiPpk: string[]
-  potensiBendahara: string[]
-  potensiPpspm: string[]
+  [column: string]: string[]
 }
 
-export async function getFacets(): Promise<Facets> {
-  const r = await request<Record<string, string[]>>('/api/facets')
-  return {
-    unitOrganisasi: r['UNIT ORGANISASI'] ?? [],
-    unitKerja: r['UNIT KERJA / SATUAN KERJA'] ?? [],
-    namaJabatan: r['NAMA JABATAN'] ?? [],
-    jenisJabatan: r['JENIS JABATAN'] ?? [],
-    statusPegawai: r['STATUS PEGAWAI'] ?? [],
-    golongan: r['GOLONGAN'] ?? [],
-    propinsi: r['PROPINSI'] ?? [],
-    potensiMenjabat: r['POTENSI MENJABAT'] ?? [],
-    potensiPpk: r['POTENSI PPK'] ?? [],
-    potensiBendahara: r['POTENSI BENDAHARA'] ?? [],
-    potensiPpspm: r['POTENSI PPSPM'] ?? [],
-  }
+export async function getFacets(columns?: string[]): Promise<Facets> {
+  const params = new URLSearchParams()
+  columns?.forEach((c) => params.append('column', c))
+  const qs = params.toString()
+  return request<Record<string, string[]>>(`/api/facets${qs ? `?${qs}` : ''}`)
 }
 
-/** Filter multi-pilihan (OR dalam satu grup; antar grup selalu AND). */
-export interface Filters {
-  unit: string[]
-  unitKerja: string[]
-  jabatanNilai: string[]
-  jenisJabatan: string[]
-  status: string[]
-  golongan: string[]
-  propinsi: string[]
-  potensiMenjabat: string[]
-  potensiPpk: string[]
-  potensiBendahara: string[]
-  potensiPpspm: string[]
-}
+/** Filter dinamis: kunci = nama kolom asli, nilai = pilihan (OR dalam kolom). */
+export type Filters = Record<string, string[]>
 
-export const EMPTY_FILTERS: Filters = {
-  unit: [],
-  unitKerja: [],
-  jabatanNilai: [],
-  jenisJabatan: [],
-  status: [],
-  golongan: [],
-  propinsi: [],
-  potensiMenjabat: [],
-  potensiPpk: [],
-  potensiBendahara: [],
-  potensiPpspm: [],
-}
+export const EMPTY_FILTERS: Filters = {}
 
 export function hasActiveFilters(f: Filters): boolean {
-  return (
-    f.unit.length > 0 ||
-    f.unitKerja.length > 0 ||
-    f.jabatanNilai.length > 0 ||
-    f.jenisJabatan.length > 0 ||
-    f.status.length > 0 ||
-    f.golongan.length > 0 ||
-    f.propinsi.length > 0 ||
-    f.potensiMenjabat.length > 0 ||
-    f.potensiPpk.length > 0 ||
-    f.potensiBendahara.length > 0 ||
-    f.potensiPpspm.length > 0
+  return Object.values(f).some((vals) => vals.length > 0)
+}
+
+/** Tiap nilai dikirim sebagai param berulang memakai nama kolom (?NIP=A&NIP=B). */
+function appendFilters(params: URLSearchParams, filters?: Filters) {
+  if (!filters) return
+  Object.entries(filters).forEach(([col, vals]) =>
+    vals.forEach((v) => params.append(col, v)),
   )
 }
 
-/** Tiap nilai dikirim sebagai param berulang (?unit=A&unit=B). */
-function appendFilters(params: URLSearchParams, filters?: Filters) {
-  if (!filters) return
-  const add = (key: string, vals: string[]) =>
-    vals.forEach((v) => params.append(key, v))
-  add('unit', filters.unit)
-  add('unit_kerja', filters.unitKerja)
-  add('jabatan_nilai', filters.jabatanNilai)
-  add('jenis_jabatan', filters.jenisJabatan)
-  add('status', filters.status)
-  add('golongan', filters.golongan)
-  add('propinsi', filters.propinsi)
-  add('potensi_menjabat', filters.potensiMenjabat)
-  add('potensi_ppk', filters.potensiPpk)
-  add('potensi_bendahara', filters.potensiBendahara)
-  add('potensi_ppspm', filters.potensiPpspm)
-}
-
 /** Pencarian multi-keyword AND (semua kata harus cocok), seperti formula Finder Excel.
- * `count` = total yang cocok (bisa ribuan); `rows` = teratas sesuai `limit`. */
+ * `count` = total yang cocok (bisa ribuan); `rows` = teratas sesuai `limit`.
+ * `filters` = filter dinamis per kolom (kunci = nama kolom). */
 export async function search(
   q: string,
   filters?: Filters,
@@ -144,7 +79,10 @@ export async function search(
 }
 
 /** SEMUA id yang cocok dengan q + filter (tanpa limit tampil). */
-export async function searchIds(q: string, filters?: Filters): Promise<number[]> {
+export async function searchIds(
+  q: string,
+  filters?: Filters,
+): Promise<number[]> {
   const params = new URLSearchParams({ q })
   appendFilters(params, filters)
   const r = await request<{ count: number; ids: number[] }>(`/api/ids?${params}`)
