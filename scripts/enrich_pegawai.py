@@ -11,6 +11,10 @@ Sumber sertifikat (per NIP):
   - PBJ/PPK     : database/sertifikat/SERTIFIKAT PBJ DAN PPK TA. 2026.xlsx
                    sheet PBJ & PPK (header baris 3): NIP=G, NOMOR=B.
 
+Dedup NIP: baris dengan NIP sama (trim/UPPER) dipangkas jadi satu -
+hanya id terkecil yang dipertahankan (duplikat sumber adalah salinan
+identik); baris NIP kosong tidak terpengaruh. meta.rows di-update.
+
 Kolom yang dibuat/diisi ulang (semua TEXT):
   UNIT KERJA / SATUAN KERJA, URUTAN UNIT ORGANISASI, URUTAN UNKER / SATKER PS,
   POTENSI MENJABAT, SERTIFIKAT PNT/SNT/BNT/PBJ/PPK
@@ -19,7 +23,11 @@ Kolom yang dibuat/diisi ulang (semua TEXT):
   POTENSI PPSPM (SNT), PROPINSI2,
   TEKNIK PS (ya bila RIWAYAT PENDIDIKAN memuat istilah teknik/program studi
   terkait, Indonesia/Inggris), JENIS JABATAN2 (salinan JENIS JABATAN, diganti
-  JABATAN PERBENDAHARAAN bila JABATAN RANGKAP memuat KEPALA/BENDAHARA/PEJABAT).
+  JABATAN PERBENDAHARAAN bila JABATAN RANGKAP memuat KEPALA/BENDAHARA/PEJABAT),
+  URUTAN UNIT ORGANISASI (1-10 sesuai struktur Kementerian PU; selain itu
+  kosong), URUTAN UNKER / SATKER PS (1-39 sesuai struktur DJ Prasarana
+  Strategis; hanya baris milik DJPS yang diberi nomor - nama "Direktorat
+  Kepatuhan Intern" juga dipakai unit serupa di ditjen lain).
 
 Kolom lama "SATUAN KERJA" (versi sebelumnya) otomatis di-rename ke nama baru.
 
@@ -123,8 +131,8 @@ URUTAN_UNKER_PS_MAP = {
     for i, nama in enumerate(URUTAN_UNKER_PS, start=1)
 }
 
-
 SEKRETARIAT_PS = "Sekretariat Direktorat Jenderal Prasarana Strategis"
+DJ_PS = "DIREKTORAT JENDERAL PRASARANA STRATEGIS"
 # "Pelaksanaan Prasarana Strategis <Wilayah>" - wilayah bisa ada newline.
 # Kecocokan berupa angka romawi (I/II/III) dilewati: itu penomoran PPK
 # ("PPK Pelaksanaan Prasarana Strategis II, Pelaksanaan Prasarana Strategis
@@ -243,6 +251,25 @@ def potensi_menjabat(jenis_jabatan: str, jabatan_lengkap: str,
     return ""  # jenis tak dikenal -> kosong
 
 
+def urutan_unit_organisasi(unit_organisasi: str) -> str:
+    """Nomor urut struktur Kementerian PU; '' = tidak dikenal -> kosong."""
+    k = " ".join(unit_organisasi.split()).casefold()
+    return URUTAN_UNIT_ORGANISASI_MAP.get(k, "")
+
+
+def urutan_satker_ps(satuan: str, unit_organisasi: str) -> str:
+    """Nomor urut satker DJPS (UNIT KERJA / SATUAN KERJA); '' = di luar PS.
+
+    Nomor dibatasi untuk baris milik DJ PS saja: nama satuan seperti
+    "Direktorat Kepatuhan Intern" juga dipakai unit kepatuhan intern milik
+    ditjen lain - tanpa batas org, semuanya akan ikut mendapat nomor PS.
+    """
+    if unit_organisasi.strip().upper() != DJ_PS:
+        return ""
+    k = " ".join(satuan.split()).casefold()
+    return URUTAN_UNKER_PS_MAP.get(k, "")
+
+
 def load_sertifikat() -> dict[str, dict[str, list[str]]]:
     """-> {jenis: {nip: [nomor, ...]}}; jenis di PNT/SNT/BNT/PBJ/PPK."""
     out: dict[str, dict[str, list[str]]] = {k: {} for k in
@@ -296,7 +323,8 @@ def main() -> None:
     con.row_factory = sqlite3.Row
     try:
         cols = {r[1] for r in con.execute("PRAGMA table_info(pegawai)")}
-        for c in ("NIP", "UNIT KERJA", "JABATAN LENGKAP", "JENIS JABATAN"):
+        for c in ("NIP", "UNIT KERJA", "UNIT ORGANISASI", "JABATAN LENGKAP",
+                  "JENIS JABATAN"):
             if c not in cols:
                 sys.exit(f"kolom wajib tidak ada di DB: {c}")
 
@@ -312,6 +340,23 @@ def main() -> None:
                     + LEGACY_SATUAN + '" TO "UNIT KERJA / SATUAN KERJA"'
                 )
 
+        # Dedup baris ber-NIP duplikat: pertahankan id terkecil per NIP.
+        # Duplikat sumber adalah salinan identik; NIP kosong tidak disentuh.
+        sebelum = con.execute("SELECT COUNT(*) FROM pegawai").fetchone()[0]
+        # Gabungan kesamaan (bukan TRIM) agar idx_pegawai_nip terpakai -
+        # baris duplikat sumber salinan identik, NIP selalu polos (tanpa spasi).
+        con.execute(
+            "DELETE FROM pegawai WHERE id IN ("
+            "  SELECT p.id FROM pegawai p JOIN pegawai q"
+            "  ON q.NIP = p.NIP AND q.id < p.id WHERE p.NIP != '')"
+        )
+        sisa = con.execute("SELECT COUNT(*) FROM pegawai").fetchone()[0]
+        dup_hapus = sebelum - sisa
+        if dup_hapus:
+            # /api/meta membaca meta.rows - pastikan angkanya tetap benar.
+            con.execute("INSERT OR REPLACE INTO meta VALUES ('rows', ?)",
+                        (str(sisa),))
+
         for c in ENRICH_COLS:
             try:
                 con.execute(
@@ -323,13 +368,15 @@ def main() -> None:
 
         sert = load_sertifikat()
         rows = con.execute(
-            'SELECT id, NIP, "UNIT KERJA", "JABATAN LENGKAP", "JENIS JABATAN",'
-            ' "JABATAN RANGKAP", "PROPINSI", "RIWAYAT PENDIDIKAN" FROM pegawai'
+            'SELECT id, NIP, "UNIT KERJA", "UNIT ORGANISASI", "JABATAN LENGKAP",'
+            ' "JENIS JABATAN", "JABATAN RANGKAP", "PROPINSI",'
+            ' "RIWAYAT PENDIDIKAN" FROM pegawai'
         ).fetchall()
 
         stats = {"satuan_ps": 0, "satuan_fallback": 0,
                  "menjabat_ya": 0, "menjabat_tidak": 0, "menjabat_kosong": 0,
-                 "propinsi2_ps": 0, "propinsi2_salin": 0}
+                 "propinsi2_ps": 0, "propinsi2_salin": 0,
+                 "urutan_unit_org": 0, "urutan_satker_ps": 0}
         updates = []
         for r in rows:
             sk = satuan_kerja(r["UNIT KERJA"] or "", r["JABATAN LENGKAP"] or "")
@@ -344,6 +391,12 @@ def main() -> None:
             stats["menjabat_" + (pm or "kosong")] += 1
             tp = teknik_ps(r["RIWAYAT PENDIDIKAN"] or "")
             jj2 = jenis_jabatan2(r["JENIS JABATAN"] or "", r["JABATAN RANGKAP"] or "")
+            uo = urutan_unit_organisasi(r["UNIT ORGANISASI"] or "")
+            if uo:
+                stats["urutan_unit_org"] += 1
+            ups = urutan_satker_ps(sk, r["UNIT ORGANISASI"] or "")
+            if ups:
+                stats["urutan_satker_ps"] += 1
 
             nip = norm_nip(r["NIP"] or "")
             nomor = {t: "; ".join(sert[t].get(nip, [])) for t in sert}
@@ -368,6 +421,8 @@ def main() -> None:
                 p2,
                 tp,
                 jj2,
+                uo,
+                ups,
                 r["id"],
             ))
 
@@ -377,7 +432,9 @@ def main() -> None:
             ' "SERTIFIKAT PNT"=?, "SERTIFIKAT SNT"=?, "SERTIFIKAT BNT"=?,'
             ' "SERTIFIKAT PBJ"=?, "SERTIFIKAT PPK"=?, "POTENSI PPK"=?,'
             ' "POTENSI BENDAHARA"=?, "POTENSI PPSPM"=?, "PROPINSI2"=?,'
-            ' "TEKNIK PS"=?, "JENIS JABATAN2"=? WHERE id=?',
+            ' "TEKNIK PS"=?, "JENIS JABATAN2"=?,'
+            ' "URUTAN UNIT ORGANISASI"=?, "URUTAN UNKER / SATKER PS"=?'
+            ' WHERE id=?',
             updates,
         )
 
@@ -389,7 +446,8 @@ def main() -> None:
         con.close()
 
     # Ringkasan angka saja - tanpa NIP/nama (PII).
-    print(f"baris          : {len(updates)}")
+    print(f"baris          : {len(updates)}  (dedup NIP: {dup_hapus} baris"
+          f" duplikat dihapus)")
     print(f"unit/satuan kerja: {stats['satuan_ps']} PS wilayah,"
           f" {stats['satuan_fallback']} fallback sekretariat,"
           f" sisanya salin UNIT KERJA")
@@ -409,6 +467,8 @@ def main() -> None:
     print(f"JENIS JABATAN2 : "
           f"{sum(1 for u in updates if u[12] == 'JABATAN PERBENDAHARAAN')}"
           f" JABATAN PERBENDAHARAAN")
+    print(f"urutan unit organisasi : {stats['urutan_unit_org']} baris terisi nomor 1-10")
+    print(f"urutan unker/satker PS : {stats['urutan_satker_ps']} baris terisi nomor 1-39")
 
 
 if __name__ == "__main__":

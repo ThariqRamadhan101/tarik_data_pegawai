@@ -86,6 +86,7 @@ export default function SelectionTable({
             <table className="w-full border-collapse text-sm">
               <thead className="sticky top-0 bg-slate-50 text-left text-xs uppercase text-slate-500">
                 <tr>
+                  <th className="border-b px-2 py-2 font-medium">Aksi</th>
                   {fields.map((f) => (
                     <th
                       key={f}
@@ -108,21 +109,11 @@ export default function SelectionTable({
                       </button>
                     </th>
                   ))}
-                  <th className="border-b px-2 py-2 font-medium">Aksi</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id} className="odd:bg-white even:bg-slate-50">
-                    {fields.map((f) => (
-                      <td
-                        key={f}
-                        className="min-w-[120px] truncate border-b border-slate-100 px-3 py-1.5"
-                        title={cell(r, f)}
-                      >
-                        {cell(r, f)}
-                      </td>
-                    ))}
                     <td className="border-b border-slate-100 px-2 py-1.5">
                       <button
                         onClick={() => onRemove(r.id)}
@@ -132,6 +123,15 @@ export default function SelectionTable({
                         ✕
                       </button>
                     </td>
+                    {fields.map((f) => (
+                      <td
+                        key={f}
+                        className="min-w-[120px] truncate border-b border-slate-100 px-3 py-1.5"
+                        title={cell(r, f)}
+                      >
+                        {cell(r, f)}
+                      </td>
+                    ))}
                   </tr>
                 ))}
                 {loading && (

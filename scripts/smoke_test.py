@@ -111,6 +111,7 @@ def main() -> int:
             "SERTIFIKAT PBJ", "SERTIFIKAT PPK",
             "POTENSI PPK", "POTENSI BENDAHARA", "POTENSI PPSPM",
             "PROPINSI2", "TEKNIK PS", "JENIS JABATAN2",
+            "URUTAN UNIT ORGANISASI", "URUTAN UNKER / SATKER PS",
         ]
         check(
             "/api/columns memuat kolom enrichment",

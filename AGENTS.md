@@ -8,7 +8,7 @@ Windows PowerShell: `python` + `npm.cmd` (ExecutionPolicy memblokir `npm.ps1`). 
 
 ```powershell
 python scripts/extract_pegawai.py           # xlsx terbaru (mtime) di database/pegawai/ -> database/pegawai.db
-python scripts/enrich_pegawai.py            # 13 kolom turunan; WAJIB diulang setelah extract
+python scripts/enrich_pegawai.py            # 15 kolom turunan; WAJIB diulang setelah extract
 cd web; npm.cmd install; npm.cmd run build  # tsc -b && vite build -> web/dist
 python server/server.py                     # 127.0.0.1:8000 (API read-only + static web/dist)
 npm.cmd run dev                             # di web/; Vite 0.0.0.0:5174, proxy /api -> 127.0.0.1:8000 (server.py harus nyala)
@@ -23,7 +23,7 @@ Workbook **tidak ada di repo** (gitignore, PII). Checkout segar: salin `laporan-
 ## Arsitektur
 
 - `scripts/extract_pegawai.py` — sheet `laporan-pegawai` -> tabel `pegawai`; sumber dipilih dari mtime terbaru di `database/pegawai/` (`--xlsx`/`--db` override). **Menghapus/membuat ulang file DB** (kolom enrich hilang); xlsx sumber tidak diubah. Semua nilai TEXT: NIP dan `TANGGAL LAHIR`/`TMT *` adalah string `dd-mm-yyyy` — jangan parse sebagai angka/tanggal. `id` = kunci baris; `finder_text` = gabungan uppercase dari `FINDER_FIELDS` (bukan semua kolom) untuk pencarian.
-- `scripts/enrich_pegawai.py` — idempotent (`ADD COLUMN` toleran duplikat, `UPDATE` penuh tiap run). Menambah 13 kolom TEXT: `UNIT KERJA / SATUAN KERJA`, `POTENSI MENJABAT`, `SERTIFIKAT PNT/SNT/BNT/PBJ/PPK` (nomor, `"; "`; kosong = tidak punya), `POTENSI PPK/BENDAHARA/PPSPM`, `PROPINSI2`, `TEKNIK PS`, `JENIS JABATAN2`.
+- `scripts/enrich_pegawai.py` — idempotent (`ADD COLUMN` toleran duplikat, `UPDATE` penuh tiap run). Pertama **dedup NIP** (pertahankan `id` terkecil; duplikat sumber salinan identik; baris NIP kosong tak disentuh; update `meta.rows`). Menambah 15 kolom TEXT: `UNIT KERJA / SATUAN KERJA`, `POTENSI MENJABAT`, `SERTIFIKAT PNT/SNT/BNT/PBJ/PPK` (nomor, `"; "`; kosong = tidak punya), `POTENSI PPK/BENDAHARA/PPSPM`, `PROPINSI2`, `TEKNIK PS`, `JENIS JABATAN2`, `URUTAN UNIT ORGANISASI` (1-10 struktur PU; tak cocok = kosong), `URUTAN UNKER / SATKER PS` (1-39 struktur DJPS; hanya baris `UNIT ORGANISASI` = DJ Prasarana Strategis — nama "Direktorat Kepatuhan Intern" juga dipakai unit serupa di ditjen lain, tanpa batas org nomornya salah).
   - `UNIT KERJA / SATUAN KERJA` & `PROPINSI2` hanya memecah baris `Sekretariat Direktorat Jenderal Prasarana Strategis` per wilayah dari pola `Pelaksanaan Prasarana Strategis <wilayah>` di `JABATAN LENGKAP`; romawi I/II/III (nomor PPK) dilewati. `UNIT KERJA / SATUAN KERJA` fallback ke nama sekretariat; `PROPINSI2` kosong bila tidak ada match. Baris lain: salin `UNIT KERJA` / `PROPINSI`.
   - `POTENSI PPK` = `ya` iff PNT **dan** (PBJ atau PPK); `POTENSI BENDAHARA` = BNT; `POTENSI PPSPM` = SNT (ketiganya selalu `ya`/`tidak`). `POTENSI MENJABAT`: struktural/lainnya `tidak`; perbendaharaan `ya` iff `JABATAN LENGKAP` memuat PELAKSANA/PETUGAS/PENATA TEKNIK; fungsional/pelaksana `tidak` iff `JABATAN RANGKAP` memuat kata pimpinan (DIREKTUR/SEKRETARIS/KEPALA/BENDAHARA/PEJABAT), else `ya`; jenis tak dikenal kosong.
   - `TEKNIK PS` = `ya` iff `RIWAYAT PENDIDIKAN` (uppercase; spasi/tanda baca dinormalisasi) memuat salah satu istilah Indonesia/Inggris di `KATA_TEKNIK_PS` (Arsitektur/Architecture, Sipil/Civil, ...), else `tidak`.
@@ -33,7 +33,7 @@ Workbook **tidak ada di repo** (gitignore, PII). Checkout segar: salin `laporan-
 - Pencarian `q`: token spasi AND pada `finder_text` (case-insensitive, `%`/`_` di-escape); `;` memecah segmen OR (ranking pakai segmen pertama). Urutan: NIP eksak -> prefix NIP -> prefix nama -> sisanya. `q` kosong tanpa filter -> `[]` (tidak membuang ~38k baris); filter-only tetap jalan. `mode=or` hanya meng-OR-kan grup filter (q tetap AND dengan filter); UI selalu AND.
 - Filter: exact match case-insensitive; nilai param berulang = OR dalam kolom, AND antar kolom. Nama param yang bukan sistem dianggap nama kolom, jadi kolom ad-hoc langsung bisa difilter: `?UNIT+ORGANISASI=A&UNIT+ORGANISASI=B` (alias lama `unit`, `unit_kerja`, `jabatan_nilai`, `status`, ... ada di `filter_cond`; `jabatan` = substring per kata).
 - Kunci baris `id`, **bukan NIP** (NIP duplikat). `id` + `finder_text` disembunyikan dari `/api/columns` dan UI.
-- Kolom ad-hoc tanpa kode: `ALTER TABLE pegawai ADD COLUMN <nama> TEXT` + `UPDATE`; `/api/columns` membaca `PRAGMA table_info`, jadi otomatis muncul di picker. Jangan hand-ALTER 13 kolom milik enrich — pakai skrip enrich.
+- Kolom ad-hoc tanpa kode: `ALTER TABLE pegawai ADD COLUMN <nama> TEXT` + `UPDATE`; `/api/columns` membaca `PRAGMA table_info`, jadi otomatis muncul di picker. Jangan hand-ALTER 15 kolom milik enrich — pakai skrip enrich.
 
 ## Webapp (`web/`)
 
@@ -42,6 +42,7 @@ Workbook **tidak ada di repo** (gitignore, PII). Checkout segar: salin `laporan-
 - Pencarian UI: debounce 300 ms; tampil 200 teratas (`DISPLAY_LIMIT`), "Tambah semua" memakai `/api/ids` lalu `/api/rows` per 500 id (`ROWS_CHUNK`). Sort header **hanya di Daftar Terpilih** (asc -> desc -> urutan tambah); urutan `displayRows` yang diexport.
 - Layout: `lg+` dashboard fixed (`h-dvh`, panel scroll internal); `<lg` scroll halaman + panel filter Tampilkan/Sembunyikan + picker kolom lewat hamburger. `server.py` bind `127.0.0.1`; akses HP lewat Vite 5174 (proxy), bukan langsung ke 8000.
 - Resize kolom tidak aktif: `ResizableColumns.tsx`/`useResizableColumns.ts` masih ada tetapi tidak diimpor di UI saat ini.
+- Kolom **Aksi** selalu paling kiri (tabel hasil `SearchPanel` & tabel terpilih `SelectionTable`), kolom data menumpul setelahnya.
 
 ## Gotchas
 
