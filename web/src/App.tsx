@@ -52,7 +52,6 @@ export default function App() {
   const [rowsLoading, setRowsLoading] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [filtersCollapsed, setFiltersCollapsed] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Muat metadata + daftar kolom sekali di awal; rekonsiliasi localStorage.
@@ -182,14 +181,6 @@ export default function App() {
         <span className="ml-auto shrink-0 rounded-full bg-blue-600 px-2.5 py-1 text-xs font-medium lg:px-3 lg:text-sm">
           {ids.length} terpilih
         </span>
-        {/* Toggle filter panel - desktop */}
-        <button
-          onClick={() => setFiltersCollapsed((c) => !c)}
-          className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-300 hover:bg-slate-700 hover:text-white transition-colors hidden lg:inline-flex items-center gap-1"
-          aria-label={filtersCollapsed ? 'Tampilkan filter' : 'Sembunyikan filter'}
-        >
-          {filtersCollapsed ? 'Tampilkan' : 'Sembunyikan'}
-        </button>
       </header>
 
       {/* Main content */}
@@ -259,16 +250,9 @@ export default function App() {
             </div>
           )}
 
-          {!filtersCollapsed && (
-            <FilterBar columns={columns} filters={filters} onChange={setFilters} />
-          )}
+          <FilterBar columns={columns} filters={filters} onChange={setFilters} />
 
-          <SearchPanel
-            fields={picked}
-            filters={filters}
-            onAdd={addIds}
-            extraFlex={!filtersCollapsed ? 'lg:flex-[5]' : undefined}
-          />
+          <SearchPanel fields={picked} filters={filters} onAdd={addIds} />
 
           <SelectionTable
             fields={picked}
@@ -282,7 +266,6 @@ export default function App() {
             onDownload={download}
             onHeaderSort={headerSort}
             onSortReset={() => setSort(null)}
-            extraFlex={!filtersCollapsed ? 'lg:flex-[3]' : undefined}
           />
         </main>
       </div>

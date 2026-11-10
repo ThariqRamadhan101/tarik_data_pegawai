@@ -14,7 +14,6 @@ interface Props {
   onDownload: () => void
   onHeaderSort: (field: string) => void
   onSortReset: () => void
-  extraFlex?: string
 }
 
 function cell(row: Row, col: string): string {
@@ -35,10 +34,9 @@ export default function SelectionTable({
   onDownload,
   onHeaderSort,
   onSortReset,
-  extraFlex,
 }: Props) {
   return (
-    <section className={`flex flex-col rounded-lg border border-slate-200 bg-white shadow-sm lg:min-h-0 ${extraFlex ?? 'lg:flex-[2]'}`}>
+    <section className="flex flex-col rounded-lg border border-slate-200 bg-white shadow-sm lg:min-h-0 lg:flex-[2]">
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-3">
         <h2 className="text-sm font-semibold">Daftar Terpilih</h2>
         <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">

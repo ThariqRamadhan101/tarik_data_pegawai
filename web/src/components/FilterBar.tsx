@@ -261,7 +261,7 @@ export default function FilterBar({ columns, filters, onChange }: Props) {
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
-          className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 lg:hidden"
+          className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 inline-flex items-center gap-1"
           aria-expanded={open}
           aria-controls="filter-body"
         >

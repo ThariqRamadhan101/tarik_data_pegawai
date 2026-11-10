@@ -15,7 +15,6 @@ interface Props {
   /** Filter dinamis per kolom dari FilterBar; q boleh kosong bila ada filter. */
   filters: Filters
   onAdd: (ids: number[]) => void
-  extraFlex?: string
 }
 
 const DISPLAY_LIMIT = 200 // baris tampil per halaman hasil; total cocok bisa ribuan
@@ -39,7 +38,7 @@ function cell(row: Row, col: string): string {
  * dipisah ';' -> di-OR-kan (mis. "agus prasarana strategis; budi sumber daya air").
  * Digabungkan dengan filter dari FilterBar.
  */
-export default function SearchPanel({ fields, filters, onAdd, extraFlex }: Props) {
+export default function SearchPanel({ fields, filters, onAdd }: Props) {
   const [q, setQ] = useState('')
   const [results, setResults] = useState<Row[]>([])
   const [count, setCount] = useState(0)
@@ -118,7 +117,7 @@ export default function SearchPanel({ fields, filters, onAdd, extraFlex }: Props
   }
 
   return (
-    <section className={`flex flex-col rounded-lg border border-slate-200 bg-white shadow-sm lg:min-h-0 ${extraFlex ?? 'lg:flex-[3]'}`}>
+    <section className="flex flex-col rounded-lg border border-slate-200 bg-white shadow-sm lg:min-h-0 lg:flex-[3]">
       <div className="border-b border-slate-200 px-3 py-2.5 lg:px-4 lg:py-3">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
           <input
