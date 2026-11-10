@@ -52,6 +52,7 @@ export default function App() {
   const [rowsLoading, setRowsLoading] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [filtersCollapsed, setFiltersCollapsed] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Muat metadata + daftar kolom sekali di awal; rekonsiliasi localStorage.
@@ -181,6 +182,17 @@ export default function App() {
         <span className="ml-auto shrink-0 rounded-full bg-blue-600 px-2.5 py-1 text-xs font-medium lg:px-3 lg:text-sm">
           {ids.length} terpilih
         </span>
+        {/* Toggle filter panel - desktop */}
+        <button
+          onClick={() => setFiltersCollapsed((c) => !c)}
+          className="rounded-lg p-1.5 hover:bg-slate-700 hidden lg:flex items-center gap-1.5 text-xs text-slate-300 hover:text-white transition-colors"
+          aria-label={filtersCollapsed ? 'Tampilkan filter' : 'Sembunyikan filter'}
+        >
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+          <span className="font-medium">{filtersCollapsed ? 'Filter ▼' : 'Filter ▲'}</span>
+        </button>
       </header>
 
       {/* Main content */}
@@ -250,9 +262,16 @@ export default function App() {
             </div>
           )}
 
-          <FilterBar columns={columns} filters={filters} onChange={setFilters} />
+          {!filtersCollapsed && (
+            <FilterBar columns={columns} filters={filters} onChange={setFilters} />
+          )}
 
-          <SearchPanel fields={picked} filters={filters} onAdd={addIds} />
+          <SearchPanel
+            fields={picked}
+            filters={filters}
+            onAdd={addIds}
+            extraFlex={!filtersCollapsed ? 'lg:flex-[5]' : undefined}
+          />
 
           <SelectionTable
             fields={picked}
@@ -266,6 +285,7 @@ export default function App() {
             onDownload={download}
             onHeaderSort={headerSort}
             onSortReset={() => setSort(null)}
+            extraFlex={!filtersCollapsed ? 'lg:flex-[3]' : undefined}
           />
         </main>
       </div>

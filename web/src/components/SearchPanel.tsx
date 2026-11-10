@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { ClipboardEvent } from 'react'
 import {
   errorText,
   hasActiveFilters,
@@ -14,9 +15,18 @@ interface Props {
   /** Filter dinamis per kolom dari FilterBar; q boleh kosong bila ada filter. */
   filters: Filters
   onAdd: (ids: number[]) => void
+  extraFlex?: string
 }
 
 const DISPLAY_LIMIT = 200 // baris tampil per halaman hasil; total cocok bisa ribuan
+
+/** Pisahkan input menjadi beberapa query: `;` atau baris baru = OR. */
+function parseQueries(raw: string): string[] {
+  return raw
+    .split(/[;\r\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
 
 function cell(row: Row, col: string): string {
   const v = row[col]
@@ -29,7 +39,7 @@ function cell(row: Row, col: string): string {
  * dipisah ';' -> di-OR-kan (mis. "agus prasarana strategis; budi sumber daya air").
  * Digabungkan dengan filter dari FilterBar.
  */
-export default function SearchPanel({ fields, filters, onAdd }: Props) {
+export default function SearchPanel({ fields, filters, onAdd, extraFlex }: Props) {
   const [q, setQ] = useState('')
   const [results, setResults] = useState<Row[]>([])
   const [count, setCount] = useState(0)
@@ -40,6 +50,9 @@ export default function SearchPanel({ fields, filters, onAdd }: Props) {
   const seq = useRef(0)
 
   const hasFilter = hasActiveFilters(filters)
+  const queries = parseQueries(q)
+  // Kirim bentuk ternormalisasi: newline/semicolon -> '; ' (OR di server).
+  const queryText = queries.join('; ')
 
   const chips: [string, string[]][] = Object.entries(filters).filter(
     ([, vals]) => vals.length > 0,
@@ -47,8 +60,7 @@ export default function SearchPanel({ fields, filters, onAdd }: Props) {
 
   // Debounce 300ms; respons lama diabaikan (seq guard).
   useEffect(() => {
-    const text = q.trim()
-    if (!text && !hasFilter) {
+    if (!queryText && !hasFilter) {
       setResults([])
       setCount(0)
       setSearched(false)
@@ -58,7 +70,7 @@ export default function SearchPanel({ fields, filters, onAdd }: Props) {
     const mySeq = ++seq.current
     setLoading(true)
     const t = setTimeout(() => {
-      search(text, filters, DISPLAY_LIMIT)
+      search(queryText, filters, DISPLAY_LIMIT)
         .then((r) => {
           if (mySeq !== seq.current) return
           setResults(r.rows)
@@ -75,7 +87,7 @@ export default function SearchPanel({ fields, filters, onAdd }: Props) {
         })
     }, 300)
     return () => clearTimeout(t)
-  }, [q, hasFilter, filters])
+  }, [queryText, hasFilter, filters])
 
   const add = (ids: number[]) => {
     if (ids.length) onAdd(ids)
@@ -86,7 +98,7 @@ export default function SearchPanel({ fields, filters, onAdd }: Props) {
     setAddingAll(true)
     setError(null)
     try {
-      add(await searchIds(q.trim(), filters))
+      add(await searchIds(queryText, filters))
     } catch (e) {
       setError(errorText(e))
     } finally {
@@ -94,14 +106,28 @@ export default function SearchPanel({ fields, filters, onAdd }: Props) {
     }
   }
 
+  /** Tempel daftar dari Excel/teks: baris baru diubah jadi pemisah ';'. */
+  const handlePaste = (e: ClipboardEvent<HTMLInputElement>) => {
+    const pasted = e.clipboardData.getData('text')
+    if (!/[\r\n]/.test(pasted)) return
+    e.preventDefault()
+    const start = e.currentTarget.selectionStart ?? q.length
+    const end = e.currentTarget.selectionEnd ?? q.length
+    const inserted = parseQueries(pasted).join('; ')
+    setQ((prev) => prev.slice(0, start) + inserted + prev.slice(end))
+  }
+
   return (
-    <section className="flex flex-col rounded-lg border border-slate-200 bg-white shadow-sm lg:min-h-0 lg:flex-[3]">
+    <section className={`flex flex-col rounded-lg border border-slate-200 bg-white shadow-sm lg:min-h-0 ${extraFlex ?? 'lg:flex-[3]'}`}>
       <div className="border-b border-slate-200 px-3 py-2.5 lg:px-4 lg:py-3">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder='Cari Nama/NIP/Unit Organisasi'
+            onPaste={handlePaste}
+            placeholder='Cari Nama/NIP/Unit — pisahkan nilai dengan ";"'
+            title='Spasi = semua kata harus cocok (AND); ";" atau baris baru = beberapa nilai alternatif (OR). Contoh: 199990001; Budi; 2131231321'
+            aria-label="Cari nama, NIP, atau unit organisasi"
             className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-200"
             autoFocus
           />
@@ -124,6 +150,17 @@ export default function SearchPanel({ fields, filters, onAdd }: Props) {
                 : `${count.toLocaleString('id-ID')} cocok — menampilkan ${results.length} teratas`}
             </span>
           )}
+          {queries.length > 1 && (
+            <span
+              className="rounded bg-blue-100 px-1.5 py-0.5 font-medium text-blue-700"
+              title={queryText}
+            >
+              {queries.length} nilai (OR)
+            </span>
+          )}
+          <span className="text-slate-400" title="Contoh: 199990001; Budi; 2131231321">
+            spasi = AND · “;” = OR
+          </span>
           {chips.map(([label, vals]) =>
             vals.length ? (
               <span
