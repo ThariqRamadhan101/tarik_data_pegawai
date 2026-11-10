@@ -185,13 +185,10 @@ export default function App() {
         {/* Toggle filter panel - desktop */}
         <button
           onClick={() => setFiltersCollapsed((c) => !c)}
-          className="rounded-lg p-1.5 hover:bg-slate-700 hidden lg:flex items-center gap-1.5 text-xs text-slate-300 hover:text-white transition-colors"
+          className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium text-slate-300 hover:bg-slate-700 hover:text-white transition-colors hidden lg:inline-flex items-center gap-1"
           aria-label={filtersCollapsed ? 'Tampilkan filter' : 'Sembunyikan filter'}
         >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-          </svg>
-          <span className="font-medium">{filtersCollapsed ? 'Filter ▼' : 'Filter ▲'}</span>
+          {filtersCollapsed ? 'Tampilkan' : 'Sembunyikan'}
         </button>
       </header>
 

@@ -4,7 +4,7 @@ Alat lokal: xlsx `laporan-pegawai` (EHRM) -> SQLite -> webapp cari/pilih pegawai
 
 ## Perintah
 
-Windows PowerShell: `python` + `npm.cmd` (ExecutionPolicy memblokir `npm.ps1`). Di Linux/workspace ini: `python3` + `npm`; `python` tidak ada dan `.venv/` **tidak** berisi pandas — jangan diaktifkan. Python sistem sudah punya `pandas` + `openpyxl`.
+Windows PowerShell: `python` + `npm.cmd` (ExecutionPolicy memblokir `npm.ps1`). Di Linux/workspace ini: `python3` + `npm`; `python` tidak ada dan `.venv/` **tidak** berisi pandas — jangan diaktifkan. Python sistem sudah punya `pandas` + `openpyxl`; tidak ada `requirements.txt`.
 
 ```powershell
 python scripts/extract_pegawai.py           # xlsx terbaru (mtime) di database/pegawai/ -> database/pegawai.db
@@ -16,7 +16,7 @@ npm.cmd run lint                            # di web/ (eslint)
 python scripts/smoke_test.py                # server harus nyala; OK/FAIL + hitungan, tanpa isi baris
 ```
 
-Urutan verifikasi: `extract -> enrich -> build -> lint -> smoke_test`; tidak ada unit test. `tsc -b` memakai `strict` + `verbatimModuleSyntax` (pakai `import type`) dan `noUnusedLocals/Parameters` — build gagal bila dilanggar. `smoke_test.py` bergantung pada data nyata (mis. Bina Marga ~14k baris, 250+ unit kerja), jadi DB kosong/parsial akan FAIL.
+Urutan verifikasi: `extract -> enrich -> build -> lint -> smoke_test`; tidak ada unit test atau lint Python — verifikasi backend hanya `smoke_test.py`. `tsc -b` memakai `strict` + `verbatimModuleSyntax` (pakai `import type`) dan `noUnusedLocals/Parameters` — build gagal bila dilanggar. `smoke_test.py` bergantung pada data nyata (mis. Bina Marga ~14k baris, 250+ unit kerja), jadi DB kosong/parsial akan FAIL, dan `BASE`-nya hardcoded `127.0.0.1:8000` (tidak mengikuti `server.py --port`).
 
 Workbook **tidak ada di repo** (gitignore, PII). Checkout segar: salin `laporan-pegawai-*.xlsx` ke `database/pegawai/` dan file sertifikat ke `database/sertifikat/`, lalu `extract -> enrich`; tanpa DB, server menolak start.
 
@@ -39,15 +39,15 @@ Workbook **tidak ada di repo** (gitignore, PII). Checkout segar: salin `laporan-
 
 - `DEFAULT_KOLOM` (`App.tsx`): `NAMA LENGKAP, NIP, STATUS PEGAWAI, GOLONGAN, DESKRIPSI GOLONGAN, NAMA JABATAN, UNIT ORGANISASI, UNIT KERJA / SATUAN KERJA, PROPINSI`; pertama kali dibuka semua dicentang. Urutan `picked` = urutan kolom di tabel & Excel. Pilihan disimpan di localStorage dan dipangkas jika kolom hilang; id terpilih terikat `meta.generatedAt` dan dibuang setelah re-extract.
 - `FilterBar.tsx` dinamis: 11 kolom standar terpasang default; user bisa menambah kolom lewat "Tambah filter kolom" dan melepas via ×. Opsi facet di-lazy-load per kolom (~47 KB untuk 11 default vs ~16 MB semua kolom). Tidak ada filter per kolom di header tabel (sengaja).
-- Pencarian UI: debounce 300 ms; tampil 200 teratas (`DISPLAY_LIMIT`), "Tambah semua" memakai `/api/ids` lalu `/api/rows` per 500 id (`ROWS_CHUNK`). Sort header **hanya di Daftar Terpilih** (asc -> desc -> urutan tambah); urutan `displayRows` yang diexport.
+- Pencarian UI: input menerima `;` atau baris baru (paste daftar) sebagai OR dan spasi sebagai AND; debounce 300 ms; tampil 200 teratas (`DISPLAY_LIMIT`), "Tambah semua" memakai `/api/ids` lalu `/api/rows` per 500 id (`ROWS_CHUNK`). Sort header **hanya di Daftar Terpilih** (asc -> desc -> urutan tambah); urutan `displayRows` yang diexport.
 - Layout: `lg+` dashboard fixed (`h-dvh`, panel scroll internal); `<lg` scroll halaman + panel filter Tampilkan/Sembunyikan + picker kolom lewat hamburger. `server.py` bind `127.0.0.1`; akses HP lewat Vite 5174 (proxy), bukan langsung ke 8000.
 - Resize kolom tidak aktif: `ResizableColumns.tsx`/`useResizableColumns.ts` masih ada tetapi tidak diimpor di UI saat ini.
 - Kolom **Aksi** selalu paling kiri (tabel hasil `SearchPanel` & tabel terpilih `SelectionTable`), kolom data menumpul setelahnya.
 
 ## Gotchas
 
-- **PII**: workbook + `database/pegawai.db` berisi NIK/NPWP/telepon/alamat/email. Jangan commit, jangan paste isi baris ke prompt/log/uji — hitungan saja. Log server masih memuat request line/query. `__pycache__` **tidak** di-ignore — jangan `git add -A`.
-- Jangan pakai `scripts/create_empty_db.py` (untracked): skemanya lowercase + `NIP UNIQUE` dan path absolut, tidak kompatibel dengan `extract_pegawai.py`; skema resmi hanya dari extract.
+- **PII**: workbook + `database/pegawai.db` berisi NIK/NPWP/telepon/alamat/email. Jangan commit, jangan paste isi baris ke prompt/log/uji — hitungan saja. Log server masih memuat request line/query. `__pycache__` **tidak** di-ignore (dan `.pyc` sudah ter-track) — jangan `git add -A`.
+- Jangan pakai `scripts/create_empty_db.py` (ter-track di git, tapi path absolut `/home/athar/...`, skema lowercase + `NIP UNIQUE`, dan tabel riwayat tak dipakai): tidak kompatibel dengan `extract_pegawai.py`; skema resmi hanya dari extract.
 - Stale `:8000` (Windows `SO_REUSEADDR`): dua `server.py` bisa hidup bersama dan request acak ke kode lama. Cek/matikan dulu: `Get-NetTCPConnection -LocalPort 8000 -State Listen`.
 - Vite `host 0.0.0.0`, `port 5174`, `strictPort: true`: `npm run dev` **gagal** bila port terpakai, bukan pindah. Linux: `ss -ltnp | grep :5174`; Windows: `Get-NetTCPConnection -LocalPort 5174 -State Listen`.
 - Jangan edit/re-zip `.xlsx` manual (OOXML rusak); pakai openpyxl/pandas. Ekspor EHRM baru = file baru `laporan-pegawai-<epoch-ms>.xlsx` (riwayat disimpan; extract hanya rebuild DB).
