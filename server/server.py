@@ -8,6 +8,7 @@ Endpoints:
   GET  /api/search?q=..&limit=..     -> pencarian multi-keyword AND (logika Finder Excel)
   GET  /api/rows?ids=1,2,3&fields=A,B-> baris terpilih, kolom terpilih
   POST /api/export  {ids, fields}    -> unduh xlsx daftar terpilih
+  POST /api/upload  (body xlsx)      -> extract+enrich file upload, ganti DB
   GET  /...                          -> static web/dist (SPA)
 
 Jalankan setelah build frontend:
@@ -24,9 +25,15 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import os
+import shutil
 import sqlite3
+import subprocess
 import sys
+import threading
+import time
 import urllib.parse
+import uuid
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -39,6 +46,10 @@ MAX_LIMIT = 200          # batas baris tampil per pencarian (UI menampilkan tera
 MAX_ROWS = 40_000        # batas ids untuk /api/rows dan /api/export (> total 37.924 baris)
 MAX_ALL_IDS = 40_000     # batas /api/ids
 MAX_BODY = 10 * 1024 * 1024
+MAX_UPLOAD = 50 * 1024 * 1024   # batas file xlsx untuk /api/upload
+UPLOAD_TIMEOUT = 600     # detik; extract + enrich bisa lama pada mesin lambat
+
+UPLOAD_LOCK = threading.Lock()
 
 db_path: Path = DEFAULT_DB
 
@@ -55,6 +66,184 @@ def open_db() -> sqlite3.Connection:
     con = sqlite3.connect(db_path.as_uri() + "?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
     return con
+
+
+class UploadError(Exception):
+    """Kesalahan upload yang aman dikembalikan ke client (tanpa isi baris)."""
+
+    def __init__(self, message: str, status: int = 400):
+        super().__init__(message)
+        self.status = status
+
+
+def _safe_unlink(path: Path | None) -> None:
+    if path is None:
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _tail(text: str, limit: int = 500) -> str:
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    return (lines[-1] if lines else "")[:limit]
+
+
+def _run_script(script: str, args: list[str]) -> subprocess.CompletedProcess:
+    """Jalankan script pipeline dengan Python yang sedang menjalankan server."""
+    return subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / script), *args],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=UPLOAD_TIMEOUT,
+        check=False,
+    )
+
+
+def _script_error(stage: str, res: subprocess.CompletedProcess) -> UploadError:
+    stderr = res.stderr or ""
+    msg = _tail(stderr) or _tail(res.stdout) or f"{stage} gagal"
+    if "ModuleNotFoundError" in stderr or "No module named" in stderr:
+        msg = (
+            f"{stage} gagal: {msg} "
+            "(jalankan server dengan Python yang punya pandas/openpyxl)"
+        )
+        return UploadError(msg, 500)
+    return UploadError(f"{stage} gagal: {msg}", 400)
+
+
+def _warnings(text: str) -> list[str]:
+    return [
+        line.strip()
+        for line in (text or "").splitlines()
+        if line.strip().upper().startswith("PERINGATAN:")
+    ]
+
+
+def source_dir() -> Path:
+    """Folder riwayat sumber upload; mengikuti lokasi DB (--db)."""
+    return db_path.parent / "unggahan"
+
+
+def backup_path() -> Path:
+    return db_path.with_name(db_path.stem + "-bak" + db_path.suffix)
+
+
+def _next_source_path() -> Path:
+    base = int(time.time() * 1000)
+    for i in range(1000):
+        candidate = source_dir() / f"laporan-pegawai-{base + i}.xlsx"
+        if not candidate.exists():
+            return candidate
+    raise UploadError("Gagal membuat nama file sumber", 500)
+
+
+def _replace_db(src: Path, dst: Path) -> None:
+    """Ganti file DB; retry singkat untuk Windows yang menahan handle file."""
+    last: PermissionError | None = None
+    for _ in range(50):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError as e:
+            last = e
+            time.sleep(0.1)
+    if last:
+        raise last
+    raise OSError("gagal mengganti database")
+
+
+def import_xlsx(body: bytes) -> dict:
+    """Validasi + extract + enrich ke DB sementara, lalu ganti DB aktif.
+
+    DB aktif hanya disentuh setelah kedua script sukses. Bila gagal, file
+    sumber sementara dan DB sementara dibersihkan; DB lama tetap utuh.
+    """
+    upload_dir = source_dir()
+    upload_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    tmp_xlsx = upload_dir / f".upload-{uuid.uuid4().hex}.xlsx"
+    tmp_db = db_path.parent / f"{db_path.stem}-upload-{uuid.uuid4().hex}.db"
+    final_xlsx: Path | None = None
+    db_replaced = False
+
+    try:
+        tmp_xlsx.write_bytes(body)
+
+        extract = _run_script(
+            "extract_pegawai.py",
+            ["--xlsx", str(tmp_xlsx), "--db", str(tmp_db)],
+        )
+        if extract.returncode != 0:
+            raise _script_error("extract", extract)
+
+        # Pindahkan sumber ke nama permanen; meta di DB sementara masih
+        # menunjuk file sementara, jadi perbarui setelah rename.
+        final_xlsx = _next_source_path()
+        os.replace(tmp_xlsx, final_xlsx)
+        if os.name != "nt":
+            os.chmod(final_xlsx, 0o600)
+
+        # Tutup koneksi sebelum script lain / os.replace menyentuh file yang
+        # sama (Windows menolak rename selama handle masih terbuka).
+        con = sqlite3.connect(tmp_db)
+        try:
+            con.execute(
+                "UPDATE meta SET value=? WHERE key='source'", (final_xlsx.name,)
+            )
+            con.execute(
+                "UPDATE meta SET value=? WHERE key='source_path'",
+                (str(final_xlsx),),
+            )
+            con.commit()
+        finally:
+            con.close()
+
+        enrich = _run_script("enrich_pegawai.py", ["--db", str(tmp_db)])
+        if enrich.returncode != 0:
+            raise _script_error("enrich", enrich)
+
+        con = sqlite3.connect(tmp_db)
+        try:
+            rows = con.execute("SELECT COUNT(*) FROM pegawai").fetchone()[0]
+            meta = dict(con.execute("SELECT key, value FROM meta").fetchall())
+        finally:
+            con.close()
+
+        if rows <= 0:
+            raise UploadError("File tidak berisi baris data", 400)
+        if int(meta.get("rows", 0)) != rows:
+            raise UploadError("meta.rows tidak cocok dengan jumlah baris", 500)
+
+        backup: Path | None = None
+        if db_path.is_file():
+            backup = backup_path()
+            shutil.copy2(db_path, backup)
+
+        result = {
+            "ok": True,
+            "source": meta.get("source"),
+            "rows": rows,
+            "columns": int(meta.get("columns", 0)),
+            "generatedAt": meta.get("generated_at"),
+            "enrichedAt": meta.get("enriched_at"),
+            "backup": backup.name if backup else None,
+            "warnings": _warnings(enrich.stdout),
+        }
+
+        _replace_db(tmp_db, db_path)
+        db_replaced = True
+        return result
+    except subprocess.TimeoutExpired:
+        raise UploadError("Proses extract/enrich melebihi batas waktu", 500)
+    finally:
+        _safe_unlink(tmp_xlsx)
+        _safe_unlink(tmp_db)
+        if not db_replaced:
+            _safe_unlink(final_xlsx)
 
 
 def data_columns(con: sqlite3.Connection) -> list[str]:
@@ -594,6 +783,65 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:  # noqa: BLE001
             self.send_json({"error": f"{type(e).__name__}: {e}"}, 500)
 
+    def handle_upload(self) -> None:
+        """POST /api/upload: body xlsx mentah -> ganti DB setelah extract+enrich."""
+        if not UPLOAD_LOCK.acquire(blocking=False):
+            self.send_json({"error": "Upload lain sedang berjalan"}, 409)
+            return
+        try:
+            length_header = self.headers.get("Content-Length")
+            if not length_header:
+                self.send_json({"error": "Content-Length wajib ada"}, 411)
+                return
+            try:
+                length = int(length_header)
+            except ValueError:
+                self.send_json({"error": "Content-Length tidak valid"}, 400)
+                return
+            if length <= 0:
+                self.send_json({"error": "File kosong"}, 400)
+                return
+            if length > MAX_UPLOAD:
+                size_mb = MAX_UPLOAD // (1024 * 1024)
+                self.send_json({"error": f"Maksimal upload {size_mb} MB"}, 413)
+                return
+
+            ctype = (
+                (self.headers.get("Content-Type") or "")
+                .split(";")[0]
+                .strip()
+                .lower()
+            )
+            allowed = {
+                "application/octet-stream",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "application/zip",
+                "application/x-zip-compressed",
+            }
+            if ctype not in allowed:
+                self.send_json(
+                    {"error": "Content-Type harus xlsx/octet-stream"}, 415
+                )
+                return
+
+            body = self.rfile.read(length)
+            if len(body) != length:
+                self.send_json({"error": "Body upload tidak lengkap"}, 400)
+                return
+            if not body.startswith(b"PK"):
+                self.send_json({"error": "File bukan xlsx yang valid"}, 400)
+                return
+
+            self.send_json(import_xlsx(body))
+        except UploadError as e:
+            self.send_json({"error": str(e)}, e.status)
+        except BrokenPipeError:
+            pass
+        except Exception as e:  # noqa: BLE001
+            self.send_json({"error": f"{type(e).__name__}: {e}"}, 500)
+        finally:
+            UPLOAD_LOCK.release()
+
     def do_POST(self) -> None:
         path = urllib.parse.urlparse(self.path).path
         try:
@@ -623,6 +871,8 @@ class Handler(BaseHTTPRequestHandler):
                     "spreadsheetml.sheet",
                     fname,
                 )
+            elif path == "/api/upload":
+                self.handle_upload()
             else:
                 self.send_json({"error": "endpoint tidak dikenal"}, 404)
         except (ValueError, KeyError, json.JSONDecodeError) as e:

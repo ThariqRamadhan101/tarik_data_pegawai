@@ -254,6 +254,10 @@ export default function FilterBar({ columns, filters, onChange }: Props) {
     onChange(next)
   }
 
+  // Jumlah kolom yang punya nilai terpilih (indikator saat panel disembunyikan).
+  const activeCount = Object.values(filters).filter((v) => v.length > 0).length
+  const filtersActive = hasActiveFilters(filters)
+
   return (
     <div className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-3 shadow-sm lg:px-4">
       <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -261,13 +265,34 @@ export default function FilterBar({ columns, filters, onChange }: Props) {
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
-          className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 inline-flex items-center gap-1"
+          className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100"
           aria-expanded={open}
           aria-controls="filter-body"
+          title={open ? 'Sembunyikan panel filter' : 'Tampilkan panel filter'}
         >
+          <svg
+            className={`h-3.5 w-3.5 transition-transform ${open ? '' : '-rotate-90'}`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            aria-hidden="true"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
           {open ? 'Sembunyikan' : 'Tampilkan'}
         </button>
-        {hasActiveFilters(filters) && (
+        {!open && filtersActive && (
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100"
+            title={`${activeCount} kolom filter sedang digunakan — klik untuk menampilkan`}
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-blue-500" aria-hidden="true" />
+            {activeCount} filter aktif
+          </button>
+        )}
+        {filtersActive && (
           <button
             onClick={() => onChange({ ...EMPTY_FILTERS })}
             className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100"
@@ -294,7 +319,7 @@ export default function FilterBar({ columns, filters, onChange }: Props) {
       </div>
       <div
         id="filter-body"
-        className={`${open ? 'flex' : 'hidden'} flex-wrap items-start gap-3 lg:flex`}
+        className={`${open ? 'flex' : 'hidden'} flex-wrap items-start gap-3`}
       >
         {activeCols.map((col) => (
           <MultiSelect

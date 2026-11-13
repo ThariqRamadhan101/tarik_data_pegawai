@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import ColumnPicker from './components/ColumnPicker'
+import DatabaseUpload from './components/DatabaseUpload'
 import FilterBar from './components/FilterBar'
 import SearchPanel from './components/SearchPanel'
 import SelectionTable from './components/SelectionTable'
@@ -19,6 +20,7 @@ import { sortRows, type SortState } from './lib/sort'
 const LS_KOLOM = 'pegawai-finder-kolom'
 const LS_IDS = 'pegawai-finder-terpilih'
 const LS_DB = 'pegawai-finder-db'
+const LS_KOLOM_OPEN = 'pegawai-finder-kolom-open'
 
 const DEFAULT_KOLOM = [
   'NAMA LENGKAP',
@@ -52,6 +54,11 @@ export default function App() {
   const [rowsLoading, setRowsLoading] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [columnsOpen, setColumnsOpen] = useState(
+    () => load<boolean>(LS_KOLOM_OPEN) ?? true,
+  )
+  const [uploadOpen, setUploadOpen] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   // Muat metadata + daftar kolom sekali di awal; rekonsiliasi localStorage.
@@ -92,6 +99,9 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(LS_KOLOM, JSON.stringify(picked))
   }, [picked])
+  useEffect(() => {
+    localStorage.setItem(LS_KOLOM_OPEN, JSON.stringify(columnsOpen))
+  }, [columnsOpen])
   useEffect(() => {
     if (!meta) return
     localStorage.setItem(LS_IDS, JSON.stringify(ids))
@@ -157,6 +167,38 @@ export default function App() {
     }
   }
 
+  /** Setelah upload DB: muat ulang meta/kolom dan bersihkan state lama. */
+  const refreshAfterUpload = async () => {
+    try {
+      const [m, cols] = await Promise.all([getMeta(), getColumns()])
+      setMeta(m)
+      setColumns(cols)
+      setIds([])
+      setRows([])
+      setSort(null)
+      setFilters({ ...EMPTY_FILTERS })
+      setPicked((prev) => {
+        const next = prev.filter((c) => cols.includes(c))
+        return next.length
+          ? next
+          : DEFAULT_KOLOM.filter((c) => cols.includes(c))
+      })
+      localStorage.removeItem(LS_IDS)
+      localStorage.setItem(LS_DB, m.generatedAt)
+      setError(null)
+      setNotice(
+        `Database diperbarui: ${m.rows.toLocaleString('id-ID')} baris. ` +
+          'Daftar terpilih dikosongkan.',
+      )
+    } catch (e) {
+      setError(
+        'Database mungkin sudah diperbarui, tetapi gagal memuat ulang: ' +
+          errorText(e) +
+          '. Muat ulang halaman.',
+      )
+    }
+  }
+
   return (
     <div className="flex min-h-dvh flex-col bg-slate-50 lg:h-dvh lg:overflow-hidden">
       {/* Header - fixed */}
@@ -178,25 +220,100 @@ export default function App() {
             {meta.rows.toLocaleString('id-ID')} baris
           </span>
         )}
-        <span className="ml-auto shrink-0 rounded-full bg-blue-600 px-2.5 py-1 text-xs font-medium lg:px-3 lg:text-sm">
-          {ids.length} terpilih
-        </span>
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setColumnsOpen((o) => !o)}
+            className="hidden items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium hover:bg-slate-700 lg:inline-flex lg:text-sm"
+            aria-label={
+              columnsOpen ? 'Sembunyikan panel kolom' : 'Tampilkan panel kolom'
+            }
+            aria-expanded={columnsOpen}
+            aria-controls="column-panel"
+            title={
+              columnsOpen ? 'Sembunyikan panel kolom' : 'Tampilkan panel kolom'
+            }
+          >
+            <svg
+              className="h-5 w-5"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 5h16v14H4z"
+              />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9 5v14"
+              />
+            </svg>
+            <span>Kolom</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setNotice(null)
+              setUploadOpen(true)
+            }}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-blue-700 lg:text-sm"
+            title="Perbarui database dari file Excel"
+          >
+            <svg
+              className="h-4 w-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 16V4m0 0L8 8m4-4l4 4"
+              />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 20h16"
+              />
+            </svg>
+            <span className="hidden sm:inline">Perbarui Data</span>
+          </button>
+
+          <span className="shrink-0 rounded-full bg-blue-600 px-2.5 py-1 text-xs font-medium lg:px-3 lg:text-sm">
+            {ids.length} terpilih
+          </span>
+        </div>
       </header>
 
       {/* Main content */}
       <div className="flex flex-col lg:flex-1 lg:flex-row lg:overflow-hidden">
-        {/* Desktop sidebar - always visible on lg+ */}
-        <aside className="hidden w-64 shrink-0 border-r border-slate-200 bg-white lg:flex lg:flex-col">
-          <ColumnPicker
-            columns={columns}
-            picked={picked}
-            onToggle={togglePicked}
-            onClear={() => setPicked([])}
-            onReset={() =>
-              setPicked(DEFAULT_KOLOM.filter((c) => columns.includes(c)))
-            }
-          />
-        </aside>
+        {/* Desktop sidebar - bisa ditutup lewat tombol header */}
+        {columnsOpen && (
+          <aside
+            id="column-panel"
+            className="hidden w-64 shrink-0 border-r border-slate-200 bg-white lg:flex lg:flex-col"
+          >
+            <ColumnPicker
+              columns={columns}
+              picked={picked}
+              onToggle={togglePicked}
+              onClear={() => setPicked([])}
+              onReset={() =>
+                setPicked(DEFAULT_KOLOM.filter((c) => columns.includes(c)))
+              }
+            />
+          </aside>
+        )}
 
         {/* Mobile sidebar overlay */}
         {sidebarOpen && (
@@ -250,9 +367,34 @@ export default function App() {
             </div>
           )}
 
-          <FilterBar columns={columns} filters={filters} onChange={setFilters} />
+          {notice && (
+            <div className="flex shrink-0 items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+              <span className="flex-1">{notice}</span>
+              <button
+                onClick={() => setNotice(null)}
+                className="shrink-0 rounded p-1 hover:bg-emerald-100"
+                aria-label="Tutup notifikasi"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
 
-          <SearchPanel fields={picked} filters={filters} onAdd={addIds} />
+          <FilterBar
+            key={`filter-${meta?.generatedAt ?? 'initial'}`}
+            columns={columns}
+            filters={filters}
+            onChange={setFilters}
+          />
+
+          <SearchPanel
+            key={`search-${meta?.generatedAt ?? 'initial'}`}
+            fields={picked}
+            filters={filters}
+            onAdd={addIds}
+          />
 
           <SelectionTable
             fields={picked}
@@ -269,6 +411,13 @@ export default function App() {
           />
         </main>
       </div>
+
+      {uploadOpen && (
+        <DatabaseUpload
+          onClose={() => setUploadOpen(false)}
+          onUpdated={refreshAfterUpload}
+        />
+      )}
     </div>
   )
 }

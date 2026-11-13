@@ -9,6 +9,17 @@ export interface Meta {
   columns: number
 }
 
+export interface UploadResult {
+  ok: boolean
+  source: string | null
+  rows: number
+  columns: number
+  generatedAt: string | null
+  enrichedAt: string | null
+  backup: string | null
+  warnings: string[]
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init)
   if (!res.ok) {
@@ -26,6 +37,16 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 export async function getMeta(): Promise<Meta> {
   return request<Meta>('/api/meta')
+}
+
+/** Upload xlsx mentah; server menjalankan extract + enrich lalu mengganti DB. */
+export async function uploadDatabase(file: File): Promise<UploadResult> {
+  const body = await file.arrayBuffer()
+  return request<UploadResult>('/api/upload', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body,
+  })
 }
 
 export async function getColumns(): Promise<string[]> {

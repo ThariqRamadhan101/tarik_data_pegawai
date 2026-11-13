@@ -1,6 +1,7 @@
 # PII - jangan pernah di-commit (sumber & hasil ekstrak berisi data pegawai)
 database/pegawai/*.xlsx
 database/sertifikat/*.xlsx
+database/unggahan/*.xlsx
 database/*.db
 
 # build artifacts

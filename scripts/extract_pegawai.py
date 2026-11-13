@@ -1,7 +1,8 @@
 """Ekstraksi laporan pegawai (xlsx) -> SQLite database/pegawai.db.
 
-Default membaca file terbaru di database/pegawai/laporan-pegawai-*.xlsx.
-Idempotent: tabel selalu dibuat ulang; file sumber tidak pernah diubah.
+Default membaca file terbaru di database/pegawai/ atau database/unggahan/
+(laporan-pegawai-*.xlsx). Idempotent: tabel selalu dibuat ulang; file sumber
+tidak pernah diubah.
 
 Pakai:
     python scripts/extract_pegawai.py
@@ -24,7 +25,10 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_SOURCES = ROOT / "database" / "pegawai"
+DEFAULT_SOURCE_DIRS = (
+    ROOT / "database" / "pegawai",
+    ROOT / "database" / "unggahan",
+)
 DEFAULT_DB = ROOT / "database" / "pegawai.db"
 SHEET = "laporan-pegawai"
 
@@ -52,12 +56,13 @@ def pick_source(explicit: str | None) -> Path:
         if not p.is_file():
             sys.exit(f"File tidak ditemukan: {p}")
         return p
-    candidates = sorted(
-        DEFAULT_SOURCES.glob("laporan-pegawai-*.xlsx"),
-        key=lambda p: p.stat().st_mtime,
-    )
+    candidates: list[Path] = []
+    for directory in DEFAULT_SOURCE_DIRS:
+        candidates.extend(directory.glob("laporan-pegawai-*.xlsx"))
+    candidates.sort(key=lambda p: p.stat().st_mtime)
     if not candidates:
-        sys.exit(f"Tidak ada laporan-pegawai-*.xlsx di {DEFAULT_SOURCES}")
+        daftar = " atau ".join(str(d) for d in DEFAULT_SOURCE_DIRS)
+        sys.exit(f"Tidak ada laporan-pegawai-*.xlsx di {daftar}")
     return candidates[-1]
 
 
@@ -83,6 +88,9 @@ def main() -> None:
     dup_cols = df.columns[df.columns.duplicated()].tolist()
     if dup_cols:
         sys.exit(f"Header duplikat di sumber: {dup_cols}")
+    reserved = sorted({"id", "finder_text"} & set(df.columns))
+    if reserved:
+        sys.exit(f"Header memakai nama kolom sistem: {reserved}")
     for f in FINDER_FIELDS:
         if f not in df.columns:
             sys.exit(f"Kolom wajib untuk finder_text tidak ada di sumber: {f}")

@@ -24,6 +24,19 @@ def get_json(path: str) -> dict:
         return json.load(r)
 
 
+def post(
+    path: str,
+    body: bytes,
+    content_type: str = "application/octet-stream",
+):
+    req = urllib.request.Request(
+        BASE + path,
+        data=body,
+        headers={"Content-Type": content_type},
+    )
+    return urllib.request.urlopen(req, timeout=60)
+
+
 def main() -> int:
     fails: list[str] = []
 
@@ -362,6 +375,26 @@ def main() -> int:
                 resp.status == 200 and data[:2] == b"PK",
                 f"{len(data)} bytes",
             )
+
+        # Upload invalid harus ditolak tanpa mengubah DB (tes aman, tanpa data).
+        rows_before = get_json("/api/meta")["rows"]
+        for name, body, ctype, expected in [
+            ("/api/upload menolak non-xlsx", b"bukan xlsx",
+             "application/octet-stream", 400),
+            ("/api/upload menolak content-type salah", b"x",
+             "text/plain", 415),
+        ]:
+            try:
+                with post("/api/upload", body, ctype) as resp:
+                    check(name, False, f"HTTP {resp.status}")
+            except urllib.error.HTTPError as e:
+                check(name, e.code == expected, str(e.code))
+        rows_after = get_json("/api/meta")["rows"]
+        check(
+            "/api/upload gagal tidak mengubah DB",
+            rows_before == rows_after,
+            f"{rows_before} baris",
+        )
 
         # Request valid ditolak dengan 400.
         for name, path in [
