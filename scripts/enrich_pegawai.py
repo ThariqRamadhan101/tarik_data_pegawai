@@ -61,7 +61,7 @@ URUTAN_COLS = ["URUTAN UNIT ORGANISASI", "URUTAN UNKER / SATKER PS"]
 ENRICH_COLS = ["UNIT KERJA / SATUAN KERJA", *URUTAN_COLS, "POTENSI MENJABAT",
                *SERTIFIKAT_COLS,
                "POTENSI PPK", "POTENSI BENDAHARA", "POTENSI PPSPM", "PROPINSI2",
-               "TEKNIK PS", "JENIS JABATAN2"]
+               "TEKNIK PS", "JENIS JABATAN2", "KATEGORI"]
 LEGACY_SATUAN = "SATUAN KERJA"  # nama kolom lama -> di-rename saat migrasi
 
 # Urutan baku unit organisasi (angka 1-10 sesuai urutan di organisasi).
@@ -167,6 +167,40 @@ KATA_TEKNIK_PS = (
 
 # JENIS JABATAN2 -> JABATAN PERBENDAHARAAN bila JABATAN RANGKAP memuat ini.
 KATA_JENIS_JABATAN2 = ("KEPALA", "BENDAHARA", "PEJABAT")
+
+# Jabatan Fungsional Bidang PU (sesuai daftar user)
+JF_BIDANG_PU = (
+    "Teknik Pengairan",
+    "Teknik Jalan dan Jembatan",
+    "Teknik Tata Bangunan dan Perumahan",
+    "Teknik Penyehatan Lingkungan",
+    "Pembina Jasa Konstruksi",
+    "Pengelola Sumber Daya Air",
+    "Penata Kelola Jalan dan Jembatan",
+    "Penata Kelola Bangunan Gedung dan Kawasan Permukiman",
+    "Penata Kelola Penyehatan Lingkungan",
+    "Analis Pembiayaan Infrastruktur Pekerjaan Umum dan Perumahan",
+    "Penata Laksana Sumber Daya Air",
+    "Penata Laksana Jalan Dan Jembatan",
+    "Penata Laksana Bangunan Gedung dan Kawasan Permukiman",
+    "Penata Laksana Penyehatan Lingkungan",
+)
+
+def kategori_jabatan(jenis_jabatan: str, nama_jabatan: str, kelompok_jafung: str) -> str:
+    """Kategorisasi jabatan:
+    - JF BIDANG PU     : JENIS JABATAN mengandung 'jabatan fungsional' DAN nama jabatan ada di JF_BIDANG_PU
+    - JF BIDANG NON PU : JENIS JABATAN mengandung 'jabatan fungsional' TAPI bukan di JF_BIDANG_PU
+    - BUKAN JF         : JENIS JABATAN tidak mengandung 'jabatan fungsional'
+    """
+    j = (jenis_jabatan or "").strip().lower()
+    if "jabatan fungsional" not in j:
+        return "BUKAN JF"
+    # Cek NAMA JABATAN dan KELOMPOK JAFUNG (lebih spesifik)
+    sumber = " ".join([str(nama_jabatan or ""), str(kelompok_jafung or "")]).lower()
+    for nama in JF_BIDANG_PU:
+        if nama.lower() in sumber:
+            return "JF BIDANG PU"
+    return "JF BIDANG NON PU"
 
 
 def norm_nip(v: object) -> str:
@@ -370,7 +404,7 @@ def main() -> None:
         rows = con.execute(
             'SELECT id, NIP, "UNIT KERJA", "UNIT ORGANISASI", "JABATAN LENGKAP",'
             ' "JENIS JABATAN", "JABATAN RANGKAP", "PROPINSI",'
-            ' "RIWAYAT PENDIDIKAN" FROM pegawai'
+            ' "RIWAYAT PENDIDIKAN", "NAMA JABATAN", "KELOMPOK JAFUNG" FROM pegawai'
         ).fetchall()
 
         stats = {"satuan_ps": 0, "satuan_fallback": 0,
@@ -398,6 +432,8 @@ def main() -> None:
             if ups:
                 stats["urutan_satker_ps"] += 1
 
+            kat = kategori_jabatan(r["JENIS JABATAN"] or "", r["NAMA JABATAN"] or "", r["KELOMPOK JAFUNG"] or "")
+
             nip = norm_nip(r["NIP"] or "")
             nomor = {t: "; ".join(sert[t].get(nip, [])) for t in sert}
             punya = {t: bool(nomor[t]) for t in sert}
@@ -423,6 +459,7 @@ def main() -> None:
                 jj2,
                 uo,
                 ups,
+                kat,
                 r["id"],
             ))
 
@@ -433,7 +470,8 @@ def main() -> None:
             ' "SERTIFIKAT PBJ"=?, "SERTIFIKAT PPK"=?, "POTENSI PPK"=?,'
             ' "POTENSI BENDAHARA"=?, "POTENSI PPSPM"=?, "PROPINSI2"=?,'
             ' "TEKNIK PS"=?, "JENIS JABATAN2"=?,'
-            ' "URUTAN UNIT ORGANISASI"=?, "URUTAN UNKER / SATKER PS"=?'
+            ' "URUTAN UNIT ORGANISASI"=?, "URUTAN UNKER / SATKER PS"=?,'
+            ' "KATEGORI"=?'
             ' WHERE id=?',
             updates,
         )
