@@ -15,7 +15,7 @@ import {
   type Meta,
   type Row,
 } from './lib/api'
-import { sortRows, type SortState } from './lib/sort'
+import { sortRows, type SortState, DEFAULT_DOWNLOAD_SORT } from './lib/sort'
 
 const LS_KOLOM = 'pegawai-finder-kolom'
 const LS_IDS = 'pegawai-finder-terpilih'
@@ -156,8 +156,10 @@ export default function App() {
     setExporting(true)
     setError(null)
     try {
+      // Gunakan default sort (unor -> unker -> usia numerik) jika user belum set sort manual
+      const rowsForDownload = sort ? displayRows : sortRows(rows, DEFAULT_DOWNLOAD_SORT)
       await downloadSelection(
-        displayRows.map((r) => r.id),
+        rowsForDownload.map((r) => r.id),
         picked,
       )
     } catch (e) {

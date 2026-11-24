@@ -61,7 +61,7 @@ URUTAN_COLS = ["URUTAN UNIT ORGANISASI", "URUTAN UNKER / SATKER PS"]
 ENRICH_COLS = ["UNIT KERJA / SATUAN KERJA", *URUTAN_COLS, "POTENSI MENJABAT",
                *SERTIFIKAT_COLS,
                "POTENSI PPK", "POTENSI BENDAHARA", "POTENSI PPSPM", "PROPINSI2",
-               "TEKNIK PS", "JENIS JABATAN2", "KATEGORI"]
+               "TEKNIK PS", "JENIS JABATAN2", "KATEGORI", "UNIT KERJA BALAI PS"]
 LEGACY_SATUAN = "SATUAN KERJA"  # nama kolom lama -> di-rename saat migrasi
 
 # Urutan baku unit organisasi (angka 1-10 sesuai urutan di organisasi).
@@ -269,6 +269,34 @@ def wilayah_ps(jabatan_lengkap: str) -> str:
     return ""
 
 
+def unit_kerja_balai_ps(unit_organisasi: str, unit_kerja: str) -> str:
+    """Bentuk kolom UNIT KERJA BALAI PS.
+
+    Hanya untuk Unit Organisasi = Direktorat Jenderal Prasarana Strategis.
+    Semua uppercase.
+    - 'Pelaksanaan Prasarana Strategis' -> 'BALAI PELAKSANAAN PRASARANA STRATEGIS'
+    - 'Direktorat/Sekretariat' -> salin nama unit tersebut dalam uppercase
+    - 'Pelaksanaan Prasarana Strategis Sulawesi Utara dan Gorontalo' ->
+      'BALAI PELAKSANAAN PRASARANA STRATEGIS SULAWESI UTARA - GORONTALO'
+    Baris di luar DJPS -> kosong.
+    """
+    if unit_organisasi.strip().upper() != DJ_PS:
+        return ""
+    uk = unit_kerja.strip().upper()
+    # Handling khusus: Papua Barat harus jadi "BALAI ..."
+    if uk.startswith("PELAKSANAAN PRASARANA STRATEGIS"):
+        wilayah = uk[len("PELAKSANAAN PRASARANA STRATEGIS"):].strip()
+        # Khusus kasus: 'SULAWESI UTARA DAN GORONTALO' -> 'SULAWESI UTARA - GORONTALO'
+        if wilayah == "SULAWESI UTARA DAN GORONTALO":
+            wilayah = "SULAWESI UTARA - GORONTALO"
+        # Kasus: Sulawesi Utara dan Gorontalo digabung jadi satu Balai
+        elif wilayah in ("SULAWESI UTARA", "GORONTALO"):
+            wilayah = "SULAWESI UTARA - GORONTALO"
+        return f"BALAI PELAKSANAAN PRASARANA STRATEGIS {wilayah}" if wilayah else "BALAI PELAKSANAAN PRASARANA STRATEGIS"
+    # Untuk direktorat/sekretekretariat: salin nama dengan uppercase
+    return uk
+
+
 def potensi_menjabat(jenis_jabatan: str, jabatan_lengkap: str,
                      jabatan_rangkap: str) -> str:
     j = jenis_jabatan.strip().upper()
@@ -434,6 +462,8 @@ def main() -> None:
 
             kat = kategori_jabatan(r["JENIS JABATAN"] or "", r["NAMA JABATAN"] or "", r["KELOMPOK JAFUNG"] or "")
 
+            balai = unit_kerja_balai_ps(r["UNIT ORGANISASI"] or "", sk)
+
             nip = norm_nip(r["NIP"] or "")
             nomor = {t: "; ".join(sert[t].get(nip, [])) for t in sert}
             punya = {t: bool(nomor[t]) for t in sert}
@@ -460,21 +490,22 @@ def main() -> None:
                 uo,
                 ups,
                 kat,
+                balai,
                 r["id"],
             ))
 
         con.executemany(
-            'UPDATE pegawai SET "UNIT KERJA / SATUAN KERJA"=?,'
-            ' "POTENSI MENJABAT"=?,'
-            ' "SERTIFIKAT PNT"=?, "SERTIFIKAT SNT"=?, "SERTIFIKAT BNT"=?,'
-            ' "SERTIFIKAT PBJ"=?, "SERTIFIKAT PPK"=?, "POTENSI PPK"=?,'
-            ' "POTENSI BENDAHARA"=?, "POTENSI PPSPM"=?, "PROPINSI2"=?,'
-            ' "TEKNIK PS"=?, "JENIS JABATAN2"=?,'
-            ' "URUTAN UNIT ORGANISASI"=?, "URUTAN UNKER / SATKER PS"=?,'
-            ' "KATEGORI"=?'
-            ' WHERE id=?',
-            updates,
-        )
+                    'UPDATE pegawai SET "UNIT KERJA / SATUAN KERJA"=?,' 
+                    ' "POTENSI MENJABAT"=?,'
+                    ' "SERTIFIKAT PNT"=?, "SERTIFIKAT SNT"=?, "SERTIFIKAT BNT"=?,'
+                    ' "SERTIFIKAT PBJ"=?, "SERTIFIKAT PPK"=?, "POTENSI PPK"=?,'
+                    ' "POTENSI BENDAHARA"=?, "POTENSI PPSPM"=?, "PROPINSI2"=?,'
+                    ' "TEKNIK PS"=?, "JENIS JABATAN2"=?,'
+                    ' "URUTAN UNIT ORGANISASI"=?, "URUTAN UNKER / SATKER PS"=?,'
+                    ' "KATEGORI"=?, "UNIT KERJA BALAI PS"=?'
+                    ' WHERE id=?',
+                    updates,
+                )
 
         # Catat riwayat enrichment di meta (api_meta memakai key spesifik - aman).
         con.execute("INSERT OR REPLACE INTO meta VALUES ('enriched_at', ?)",
